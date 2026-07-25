@@ -16,7 +16,7 @@
 
 > 若 `model` slug 不在系统可用模型列表中（含点、连字符与后缀均须精确匹配），Cursor Task 运行时将回退至父 agent 模型，导致角色定义失效。更换模型前须确认目标 slug 在系统中确实存在。
 
-**职责区分**：`requirements-analyst` 负责需求挖掘与用户确认；`requirement-reviewer` **仅**审核系统设计成果物，不参与需求澄清。
+**职责区分**：`requirements-analyst` 负责以多轮苏格拉底式提问充分理解本次变更涉及的显性与重大隐性需求并完成确认（细则见该角色 agent 文件）；`requirement-reviewer` **仅**审核系统设计成果物，不参与需求澄清。
 
 ## 2. 强制规则
 
@@ -36,7 +36,7 @@
 | **机械执行权威** | `.cursor/hooks/**`、`*-run.mjs`、`workflow-gate-lib.mjs` | 客观判据唯一执行权威；行为只可加强（R12） |
 | **说明权威（按需）** | `.cursor/harness/spec/mechanical-gates.md` | Hook 一览、stop 判据、R11/R14/R15/R16/R17/E2E 公式、双要素豁免、能力边界 |
 | **门禁链细则** | `.cursor/harness/spec/gate-chain.md` | R9、无效成果物、用户确认 |
-| **模式细则** | `.cursor/harness/spec/workflow-modes.md` | 分诊、R2、路径、R10 步骤 |
+| **模式细则** | `.cursor/harness/spec/workflow-modes.md` | 分诊、R2、R20、路径、R10 步骤 |
 | **回退** | `.cursor/harness/spec/rollback.md` | 回退计数与终止 |
 | **编号导航** | `.cursor/harness/spec/rule-index.md` | R/B/TG 索引（不新增约束） |
 | **角色执行面** | `.cursor/agents/*.md` | 该角色操作细则（Task 时注入） |
@@ -45,14 +45,14 @@
 
 ## 4. 工作流模式（摘要）
 
-| 模式 | 触发 | 简化 |
+| 模式 | 生效 | 简化 |
 | ---- | ---- | ---- |
-| `full` | 默认 | 需求 → 架构 → 设计审核 → 开发 → QE → 测试 |
-| `hotfix` | 显式「热修复」「修 bug」 | 跳过 RA/SA（须已有设计或按 R9 补最小热修设计）；DE → QE → 测试；测试按 **R11** 折叠为单次通道 |
-| `docs-only` | 显式「只改文档」 | 仅 `docs/**/*.md`；Hook 拒绝源码写入 |
-| `single-task` | 显式「单任务」「小改动」 | 仅单文件级、不改 schema、不加新交互面；可预写 DE→QE→测试列表，**不跳过角色职责**（R2） |
+| `full` | 默认；未确认的轻量声明 fail-safe 为本模式 | 需求 → 架构 → 设计审核 → 开发 → QE → 测试 |
+| `hotfix` | **R20** 确认后 | 跳过 RA/SA（须已有设计或按 R9 补最小热修设计）；DE → QE → 测试；测试按 **R11** 折叠为单次通道 |
+| `docs-only` | **R20** 确认后 | 仅 `docs/**/*.md`；Hook 拒绝源码写入 |
+| `single-task` | **R20** 确认后 | 仅单文件级、不改 schema、不加新交互面；可预写 DE→QE→测试列表，**不跳过角色职责**（R2） |
 
-须写入活跃 `process.md` frontmatter 的 `workflow_mode`。**分诊表、路径约定、R2、R10 完整步骤**见 `.cursor/harness/spec/workflow-modes.md` 与 `project-manager.md`。
+须写入活跃 `process.md` frontmatter 的 `workflow_mode`。轻量模式**禁止**仅凭口令关键词或 PM 单方面落盘生效：须 AskQuestion 确认（选项含各模式**流程摘要**）+ `## 用户确认记录`「工作流模式确认」机读行（**R20**）。**分诊表、AskQuestion 固定选项文案、R2、R20、路径、R10** 见 `.cursor/harness/spec/workflow-modes.md` 与 `project-manager.md`。
 
 **E2E / 批次·最终测试**：机械门禁；公式与命令的说明权威见 `.cursor/harness/spec/mechanical-gates.md` §8.3；执行权威为 Hook/`e2e-run.mjs`。
 
@@ -66,11 +66,11 @@
 
 | # | 禁令 / 义务 | 要点 |
 | - | ------------ | ---- |
-| 1 | **不得代行子角色职责（R5）** | 禁止直接编写业务代码/设计/需求/测试等成果物；禁止初始化/装依赖等开发行为；须经对应子 agent。`.cursor/scripts\|agents\|hooks/**`、`.cursor/hooks.json`、`.cursor/harness.config.json`、构建/测试脚本、`package.json` scripts 等归 **development-engineer**；顶层禁止直接改。受门禁路径写入**必须**在对应子 agent 上下文内。**即使 `## 当前分派计划` 有效，顶层也不得亲自写**——计划有效仅代表可派发子 agent。 |
+| 1 | **不得代行子角色职责（R5）** | 禁止直接编写业务代码/设计/需求/测试等成果物；禁止初始化/装依赖等开发行为；须经对应子 agent。`.cursor/scripts\|agents\|hooks/**`、`.cursor/hooks.json`、`.cursor/harness.config.json`、构建/测试脚本、`package.json` scripts 等归 **development-engineer**；顶层禁止直接改。受门禁路径写入**必须**在对应子 agent 上下文内。**即使 `## 当前分派计划` 有效，顶层也不得亲自写**——计划有效仅代表可派发子 agent。**机械化补强**：Hook 用顶层 `conversation_id` 拦截顶层代写；并用「最近 Task 派发角色 + 进度/分派」校验角色↔路径（含 `docs/**` 成果物；源码须 DE 活跃）。细则见 `.cursor/harness/spec/mechanical-gates.md` §8.4。 |
 | 2 | **不得代行项目经理分派** | 禁止自行决定派谁/派什么/是否并行；须先经 PM 写入 `process.md`，再仅依 `## 当前分派计划` 与 `## 待派发角色列表` 发起 Task。 |
 | 3 | **不得越权改写角色内部流程** | Task `prompt` 禁止预先指定技术栈、禁止「直接创建需求/设计/代码」等绕过角色约束的指令；**严禁附加 `model` 参数**。禁止：建议 `workflow_mode`/`iterationType`；要求非 SA 产出设计；指定任务包拆分/分派数量。仅允许：用户目标原文、路径、已有成果物、用户已确认摘要、PM 已写入的分派计划。 |
 | 4 | **必须尊重阻塞** | `blocking: true` 或进度含「阻塞」时本轮结束等用户，不得同轮续派其他角色。 |
-| 5 | **阻塞时的交互义务** | 展示成果物/摘要，`AskQuestion` 或明确提问。 |
+| 5 | **阻塞时的交互义务** | 展示成果物/摘要，`AskQuestion` 或明确提问；RA 的「待苏格拉底澄清」必须如实 relay 本轮问题、事实与假设，顶层不得代答，细则见 RA/PM agent。 |
 | 6 | **串行接收目标** | 须先经 PM 接收并记录，再派下一角色；禁止同轮与 PM 并行派其他角色（`single-task`：PM 完成后可按列表连续派发，仍须逐 Task）。 |
 | 7 | **进度由 PM 维护** | 顶层不得自行篡改 `process.md` 以跳过门禁。 |
 | 8 | **禁止越级发起 Task（R8）** | 不得跳过前一角色或在门禁链未满足时派后一角色（`hotfix`/`docs-only` 按 §4 简化路径）。 |
@@ -114,7 +114,7 @@
 | 下一角色 | 必须已存在且有效 | 状态 |
 | -------- | ---------------- | ---- |
 | 需求分析师 | PM 已记录用户目标于 `process.md` | 无阻塞 |
-| 系统架构师 | `requirement-spec.md`、`requirement-list.md`；用户已确认需求摘要 | 无阻塞 |
+| 系统架构师 | `requirement-spec.md`（含结构完整、可追溯的隐性需求确认记录，R19）、`requirement-list.md`；用户已确认需求摘要 | 无阻塞 |
 | 需求评审专家 | `detail-design-spec.md`、`develop-task-list.md`；技术选型已确认（R18 机读） | 无阻塞 |
 | 开发工程师 | 同上 + `design-problem-list.md` 设计审核通过（R18 全要件）；PM 已分派 | 无阻塞 |
 | 质量工程师 | 对应功能代码与单元测试；对应开发线「执行完成」；分派须标明任务包编号 | 无阻塞 |
@@ -123,7 +123,7 @@
 
 **两级测试**：批次 `gatePassed≠true` → 不得推进下一批次；最终 `gatePassed≠true` → 不得宣告完成。公式见 `mechanical-gates.md` §8.3。
 
-**模式链**：`hotfix` = PM →（R9）→ DE → QE → 测试（R11 单次通道，不省 QE/测试）；`docs-only` = 文档角色按需，无 DE/QE/测试。R9 四项校验（设计存在性、E2E 适用性、`hotfix_p0_impact`、P0 软性提醒）见 `gate-chain.md` 与 `project-manager.md`。
+**模式链**：`hotfix` = PM →（**R20**）→（R9）→ DE → QE → 测试（R11 单次通道，不省 QE/测试）；`docs-only` =（**R20**）文档角色按需，无 DE/QE/测试。R20 见 `workflow-modes.md`；R9 见 `gate-chain.md` 与 `project-manager.md`。
 
 **用户确认留痕**：凡须确认的事项，PM 须在 `## 用户确认记录` 追加一行（确认项、时间、原话摘要）。
 

@@ -23,7 +23,8 @@ async function main() {
     return;
   }
 
-  const { allow, assertDevGateOrDeny, isGatedShellCommand, readStdinJsonAsync } = lib;
+  const { allow, assertDevGateOrDeny, deny, isGatedShellCommand, isRootConversationCaller, readStdinJsonAsync } =
+    lib;
 
   try {
     const input = await readStdinJsonAsync();
@@ -31,6 +32,15 @@ async function main() {
 
     if (!isGatedShellCommand(command)) {
       allow();
+    }
+
+    // R5 机械化补强：同 gate-dev-workflow.mjs，见 workflow-gate-lib.mjs 的
+    // isRootConversationCaller 顶部注释。顶层代理直接执行受门禁 Shell 命令时一律拒绝。
+    if (isRootConversationCaller(input?.conversation_id)) {
+      deny(
+        '流程门禁（R5，机械化补强）：检测到本次 Shell 命令由顶层代理直接发起（conversation_id 与顶层会话一致），而非通过 Task 派发的子代理。受门禁 Shell 操作必须由对应子 agent（如 development-engineer / test-engineer）在 Task 内执行。',
+        'AGENTS.md §5.1（R5）：顶层代理不得代行子角色职责，禁止直接执行受门禁 Shell 命令。请先经项目经理分派，再以 Task 发起对应子 agent 执行。',
+      );
     }
 
     assertDevGateOrDeny();

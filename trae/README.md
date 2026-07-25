@@ -1,18 +1,28 @@
 # Harness Engineering（Trae 适配版）
 
-跨技术栈 AI 编程流程规约。本目录为 **Trae 版**。将本目录作为 Trae 工作区根目录，或将本目录内容整体复制到目标项目后使用（`harness.config.json` 已收纳于 `.trae/` 内）。
+> **跨技术栈 AI 编程流程规约——让 AI 协作像专业团队一样可靠。**
 
-规约采用**分层权威**（薄宪章常驻 + Hook 机械强制 + 角色执行面 + `harness/spec` 说明细则）；架构说明见下文「规约权威分层」。日常用法从「快速开始」读起即可。
+本目录为 Harness Engineering 的 **Trae 适配版**，基于 Trae 原生 Subagent 与 Hooks 能力构建。将本目录作为 Trae 工作区根目录，或将本目录内容整体复制到目标项目后使用（`harness.config.json` 已收纳于 `.trae/` 内）。
 
-> **Trae 特有机制**：采用 **原生 Hook 自动拦截 + 顶层代理手动自检** 双保险门禁。`.trae/hooks.json` 遵循 Trae 标准格式（`PreToolUse`/`Stop` PascalCase 事件），客户端自动执行实现确定性拦截；同时 `.trae/rules/gate-protocol.md`（`alwaysApply:true`）强制顶层代理手动调用 `node .trae/scripts/gate-check.mjs` 作为兜底自检。7 个角色为 Trae 原生 Subagent（`.trae/agents/*.md`，frontmatter 含 `name`/`description`/`model`/`tools`，由内置 "Agent" 按 `description` 匹配调用）。详见 `.trae/harness/spec/trae-adaptation.md`。
+## 核心能力
 
-## 前置条件
+| 能力 | 说明 |
+| ---- | ---- |
+| **7 角色专业分工** | 项目经理 / 需求分析师 / 系统架构师 / 需求评审专家 / 开发工程师 / 质量工程师 / 测试工程师——各司其职，杜绝越权代写 |
+| **双保险机械门禁** | Trae 原生 Hook 自动拦截 + 顶层代理手动自检兜底，客观判据确定性执行，不靠自觉 |
+| **4 种工作流模式** | 完整流程 / 热修复（hotfix） / 只改文档（docs-only） / 单文件小改（single-task）——该严则严，该快则快 |
+| **6 类硬门禁校验** | 编程规范 lint（R15）、静态代码质量（R16：重复代码 + 安全扫描）、批次/最终 E2E、接口测试报告（R14）、存储对账（R17）、设计审核可追溯性（R18） |
+| **分层权威架构** | 薄宪章常驻 + Hook 机械强制 + 角色执行面 + 说明细则——约束不松，prompt 不胀 |
 
-- **Trae IDE 版本 ≥ v3.3.67**：Subagent 目录支持（v3.3.67+）与 Hooks 功能（v3.3.66+）均需在此版本及以上方可正常工作。请在「设置 > Beta」中确认「启用 Subagents 目录」开关已打开。
-- Harness Hook 与初始化脚本依赖 `Node.js >= 18` 执行 `.mjs` 文件。
-- 目标项目的业务技术栈不限；具体运行时、包管理器与测试工具由系统架构师在设计阶段声明。
+日常用法直接从「[快速开始](#快速开始)」读起即可；想了解设计思路与 Trae 特有适配机制，见下文「[规约权威分层（架构）](#规约权威分层架构)」。
 
 ## 快速开始
+
+### 前置条件
+
+- **Trae IDE 版本 ≥ v3.5.67**：Subagent 目录支持（v3.5.67+）与 Hooks 功能（v3.5.66+）均需在此版本及以上方可正常工作。请在「设置 > Beta」中确认「启用 Subagents 目录」开关已打开。
+- Harness Hook 与初始化脚本依赖 `Node.js >= 18` 执行 `.mjs` 文件。
+- 目标项目的业务技术栈不限；具体运行时、包管理器与测试工具由系统架构师在设计阶段声明。
 
 **方式一：以本目录为工作区根。** 无需手动建目录，直接把本目录作为 Trae 工作区根，向 AI 提目标即可。
 
@@ -32,9 +42,20 @@
 
 4. **（可选）手动初始化**：仅当你要在无 AI 环境下预先建目录时，可执行 `node .trae/scripts/bootstrap-docs.mjs`；Feature 迭代可执行 `node .trae/scripts/bootstrap-docs.mjs --feature=feature-name`。
 
-5. **轻量模式**（用户显式声明时生效）：`hotfix`（热修复/修bug，测试环节按 R11 折叠为单次）、`docs-only`（只改文档）、`single-task`（单任务/小改动）。触发关键词、简化路径与迭代分诊判定的完整定义见 `.trae/harness/spec/workflow-modes.md`；门禁链见 `.trae/harness/spec/gate-chain.md`（`AGENTS.md` §4/§6 为常驻摘要，此处不复述以避免漂移）。轻量模式须在 `process.md` frontmatter 中设置 `workflow_mode`。
+## 工作流模式概览
 
-6. **流程终止（不可逆）**：明确表达「取消」「终止流程」等意图时，项目经理会先用 `AskQuestion` 做二次确认；确认后该流程的 `process.md` 被 Hook 永久冻结（`cancelled: true`），任何角色均无法再修改或恢复，需继续须发起新流程。完整定义见 `.trae/harness/spec/workflow-modes.md`「流程终止（不可逆，R10）」与 `AGENTS.md` §4 摘要。
+Harness 支持 4 种工作流模式，由项目经理在接收目标时分诊提议，经用户确认后生效（**R20**：轻量模式不得仅凭关键词自动生效）。模式写入活跃 `process.md` frontmatter 的 `workflow_mode` 字段。
+
+| 模式 | 适用场景 | 流程路径 |
+| ---- | -------- | -------- |
+| **full**（完整流程） | 新增功能、改动面不清、需求待挖掘 | 需求 → 架构 → 设计审核 → 开发 → QE → 批次测试 → 最终测试 |
+| **hotfix**（热修复） | 修 bug、紧急修复 | 跳过完整 RA/SA（须已有设计或先补最小热修设计）→ DE → QE → 单次集成测试+E2E（R11 折叠，不省 QE/测试） |
+| **docs-only**（只改文档） | 文档校对、补充说明 | 仅 `docs/**/*.md`；无 DE / QE / 测试；Hook 拒绝源码写入 |
+| **single-task**（单文件小改） | 单文件级、不改 schema、不加新交互面 | 角色不省略（仍含最小需求确认与设计），可压缩分派节奏；测试判据与 full 同严 |
+
+**流程终止（不可逆，R10）**：明确表达「取消」「终止流程」等意图时，项目经理先用 `AskQuestion` 二次确认；确认后 `process.md` 被 Hook 永久冻结（`cancelled: true`），任何角色均无法再修改或恢复，需继续须发起新流程。
+
+模式分诊表、AskUserQuestion 固定选项文案、R2/R20、路径约定与 R10 步骤的完整定义见 `.trae/harness/spec/workflow-modes.md`；门禁链见 `.trae/harness/spec/gate-chain.md`。
 
 ## 目录结构
 
@@ -62,8 +83,16 @@ trae/                         # 适配 Trae 的完整规约根（目录名任意
     │   ├── harness-process.md
     │   └── harness-test-artifacts.md
     ├── agents/               # 角色执行面权威（Task 发起时注入该角色全文）
-    ├── hooks.json            # Hook 注册（matcher 与脚本映射，Trae 标准格式）
-    ├── hooks/                # 机械执行权威（确定性拦截；含 workflow-gate-lib.mjs）
+    ├── hooks.json            # Hook 注册（PascalCase 事件 + 嵌套 hooks 数组 + matcher，Trae 标准格式）
+    ├── hooks/                # 机械执行权威（确定性拦截）
+    │   ├── gate-dev-workflow.mjs      # PreToolUse：写文件门禁（R5/R6/R3/R9/R10…）
+    │   ├── gate-role-sequence.mjs     # PreToolUse Agent：门禁链（R13/R18/R19/R20…）
+    │   ├── gate-dev-shell.mjs         # PreToolUse Shell：初始化/装依赖等
+    │   ├── gate-toolchain-install.mjs # PreToolUse Shell：系统级工具链批准
+    │   ├── gate-subagent-track.mjs    # SessionStart：记录顶层 session_id（R5，恒放行）
+    │   ├── gate-stop-workflow.mjs     # Stop：未完成则 block（含 R15/R16/E2E/R14/R17）
+    │   ├── workflow-gate-lib.mjs      # 薄 barrel：再导出 lib/*
+    │   └── lib/              # 门禁实现按域拆分（core/paths/identity/design/qe/…，见 lib/README.md）
     ├── scripts/
     │   ├── bootstrap-docs.mjs   # 一键初始化 docs/ 结构（幂等）
     │   ├── gate-check.mjs        # Trae 手动门禁入口（dev-write/dev-shell/toolchain/role/stop 子命令）
@@ -76,8 +105,11 @@ trae/                         # 适配 Trae 的完整规约根（目录名任意
     │   ├── static-scan-run.mjs     # 静态代码质量硬门禁运行器（R16：重复代码+安全扫描，见 mechanical-gates.md §8.2）
     │   ├── static-scan-run-lib.mjs # static-scan-run.mjs 的纯函数库（gatePassed 判据）
     │   ├── qe-run.mjs           # 跨技术栈 QE 命令运行器（Windows 退出码不可靠时的留痕手段）
-    │   ├── gate-selftest.mjs    # 门禁逻辑回归自检（库函数单元级）
-    │   └── gate-scenarios.mjs   # 场景级门禁回归（端到端真调 5 个 Hook；框架维护用，不参与宿主项目开发）
+    │   ├── gate-selftest.mjs    # 单元自测薄入口 → tests/selftest/
+    │   ├── gate-scenarios.mjs   # 场景自测薄入口 → tests/scenarios/
+    │   └── tests/
+    │       ├── selftest/        # 按规则拆分（r3/r5/r6/r13/r18/r19/r20… + _harness/_fixtures）
+    │       └── scenarios/       # 按场景拆分（greenfield/hotfix/r5-conversation/… + _harness）
     └── templates/            # 成果物模板
 ```
 
@@ -88,6 +120,16 @@ trae/                         # 适配 Trae 的完整规约根（目录名任意
 ## 规约权威分层（架构）
 
 本适配把「约束强度」与「常驻体积」拆开：**根 `AGENTS.md` 变薄 ≠ 规约变松**。客观条件由 Hook 强制；编排禁令常驻进 prompt；长公式与操作细则按场景携带。
+
+### Trae 特有机制（双保险门禁 + Subagent）
+
+本版本基于 Trae 原生能力构建，与 Cursor 版的核心差异：
+
+- **双保险门禁**：Trae 原生 Hook 自动拦截 + 顶层代理手动自检兜底，两层共用同一套判定逻辑。`.trae/hooks.json` 遵循 Trae 标准格式（`PreToolUse` / `SessionStart` / `Stop` PascalCase 事件 + 嵌套 `hooks` 数组 + `matcher` / `command` / `timeout` 字段）；PreToolUse stdout 使用 `hookSpecificOutput.permissionDecision`（`allow` / `deny` / `ask`），Stop stdout 使用 `{decision:"block", reason}`。手动兜底入口：`node .trae/scripts/gate-check.mjs`（由 `.trae/rules/gate-protocol.md` `alwaysApply:true` 强制触发）。
+- **Subagent 角色**：7 个角色为 Trae 原生 Subagent（`.trae/agents/*.md`，frontmatter 含 `name` / `description` / `model` / `tools`），由内置 "Agent" 按 `description` 匹配调用，`model` 在文件内 pin，`tools` 按最小权限限定。
+- **跨会话状态隔离**：通过 `$TRAE_ENV_FILE`（SessionStart 事件注入）实现会话级状态共享，与持久化 `.trae/harness-state.json` 双源核验，避免跨会话陈旧状态导致 R5 误判。
+
+详见 `.trae/harness/spec/trae-adaptation.md`。
 
 ```mermaid
 flowchart TB
@@ -106,7 +148,7 @@ flowchart TB
   end
   A --> R
   A --> S
-  H -.->|"deny / followup"| A
+  H -.->|"deny / block"| A
   R -->|"Write / Shell / 跑门禁"| H
   C -.->|"编辑 process / test / e2e 时"| S
 ```
@@ -149,27 +191,8 @@ flowchart TB
 - **禁止**把 R5 / R8 / 回合自检 /「禁止绕过 Hook」改成仅靠 `description` 智能拉取的 rules——漏挂载会直接降低编排强度。
 - **禁止**只改 `AGENTS.md` / spec 措辞来迁就较弱实现；发现文档强于代码时须**补齐 Hook**（R12）。
 - **禁止**把 §8 公式长文再堆回根 `AGENTS.md` 当「第二份执行权威」；常驻只留结论与指针。
-- **允许**加厚 `agents/*` 与 `harness/spec/*`；改行为后必须同步说明权威，并跑下文「框架自测」。
+- **允许**加厚 `agents/*` 与 `harness/spec/*`；改行为后必须同步说明权威，并跑文末「框架自测」。
 - `rules/*.md` 仅作 globs 提醒与强制协议：`gate-protocol.md` 为 `alwaysApply: true`（双保险兜底）；`harness-process.md` → `docs/**/process.md`；`harness-test-artifacts.md` → 测试/QE/E2E 相关路径；后二者均为 `alwaysApply: false`。
-
-## 框架自测（可选）
-
-Harness 自带回归自测，用于在修改 Hook / 脚本 / 模板后验证门禁判定逻辑未被破坏：
-
-- **门禁逻辑自检（单元级）**：`node .trae/scripts/gate-selftest.mjs`（纯 Node，无需额外依赖；覆盖 R3 / R6 / B1 / R9 / R10 / R11 / R13 / R14 / R15 / R16 / R17 / **R18** 最低必测集及 Finding #1 回归，退出码非 0 即失败）。
-- **场景级门禁回归（端到端）**：`node .trae/scripts/gate-scenarios.mjs`（纯 Node，无需额外依赖）。它**真正 spawn 框架自己的 5 个 Hook 入口脚本**（`gate-role-sequence` / `gate-dev-workflow` / `gate-dev-shell` / `gate-toolchain-install` / `gate-stop-workflow`），在隔离 fixture（`test-results/.gate-scenarios/`，经 `HARNESS_PROCESS_PATH` / `HARNESS_GATED_ARTIFACTS_PATH` 指向）上逐条断言 `allow/deny/ask/followup`，E2E 判据用 `e2e-run-lib.mjs` 真实计算；覆盖 Greenfield / Feature / Hotfix（R11 折叠）/ 对抗健壮性 / R14 批次接口测试报告 / R15 编程规范 lint 门禁 / R16 静态代码质量门禁 / R17 业务数据存储对账 / **R18 设计审核可修复性与需求覆盖** / Finding #1 与 Finding #2 回归，退出码非 0 即失败。附 `--verbose` 打印每步 deny/ask/followup 首行原因。
-  - **定位**：此套件是**规约框架自身的维护用回归测试**，由早期一次性评估探针（原 `eval/`）沉淀而来；它**不参与任何宿主项目的开发流程**，不被 `hooks.json` / `qe-run.mjs` / `lint-run.mjs` / `static-scan-run.mjs` / `e2e-run.mjs` 引用，全程使用自建隔离 fixture，运行前会快照、运行后会还原 `test-results/e2e/`、`test-results/qe/.lint-result.json` 与 `test-results/qe/.static-scan-result.json` 下的运行时产物，不改动 `docs/` 成果物。
-  - **何时运行**：改动任一 Hook、`workflow-gate-lib.mjs`、`e2e-run-lib.mjs`、门禁相关脚本或 `.trae/templates/process.md` 后，先跑 `gate-selftest.mjs` 再跑 `gate-scenarios.mjs`；两者全绿方可提交（呼应 AGENTS.md R12「只可加强，不可放松」——回归失败即意味着门禁被意外放松/破坏）。
-- **`e2e-run-lib` 单测**：`.trae/scripts/e2e-run-lib.test.ts` 使用 vitest（配置见 `.trae/scripts/vitest.config.ts`）。本框架目录不预置 `package.json`，运行前需先在工作区安装 vitest，例如：
-
-```bash
-npm i -D vitest
-npx vitest run --config .trae/scripts/vitest.config.ts
-```
-
-> `playwright.config.ts` 依赖 `@playwright/test`，同样需按 `.trae/harness/spec/mechanical-gates.md` §8.3 与各角色文件的工具链确认流程安装后方可运行 E2E 门禁。
-
-**项目复盘 skill**：迭代结束或流程终止后，可在 Trae 中手动附加 skill `project-retrospective`（`.trae/skills/project-retrospective/`），对照规约评估执行合规性、产出须审核的改进建议，并对已批准项改规约后运行上文「框架自测」。
 
 ## 子 Agent 与 Task 映射
 
@@ -202,9 +225,33 @@ Feature 迭代时，对应文件位于 `docs/{feature-名称}/design/gated-artif
 - **`.trae/` 内部治理门禁（R6）**：`.trae/scripts|agents|hooks/**` 三目录默认纳入机制门禁；白名单豁免见 `gatedPaths.dotTraeExemptPatterns`（模板/rules/运行时状态/hooks 与 config 注册文件/工具链批准标记）
 - **Shell 拦截**：`gatedShellPatterns` + 项目级 `gated-artifacts.json`；`hooks.json` 采用宽 matcher，具体是否拦截由脚本读取配置判定
 - **工具链安装批准**：`toolchain.installPatterns` 命中后，用户确认并创建 `.trae/hooks/.toolchain-install-approved.json`（默认 60 分钟有效）
+- **R5 运行时标记**（勿手工编辑；均已列入 `.gitignore`）：
+  - `.trae/hooks/.root-conversation-id.json` — `gate-subagent-track` 首次落盘的顶层会话 id（兜底；主源为 `$TRAE_ENV_FILE` 中的 `ROOT_SESSION_ID`，会话级隔离）
+  - `.trae/hooks/.dispatched-roles.json` — 最近 Task 派发角色，供写文件时角色↔路径校验
 - **QE 命令覆盖**：`.trae/harness.config.json` → `qe.commands`（可选）；未声明时 `qe-run.mjs` / `lint-run.mjs` 按项目根目录构建清单文件自动探测技术栈并选用默认 test/lint/audit 命令。当自动探测不准确（如 monorepo/workspace）时，在 `qe.commands` 中显式声明本项目的 test/lint/audit 命令予以覆盖
 - **编程规范 lint 门禁（R15）**与**静态代码质量门禁（R16：重复代码 + 安全静态扫描）**：执行命令、机读产物路径、命令解析优先级、`gatePassed` 判据与双要素豁免机制的**说明权威见 `.trae/harness/spec/mechanical-gates.md` §8.2**（执行权威：Hook/脚本；此处不复述以避免漂移）。速查：lint 产物 `test-results/qe/.lint-result.json`；静态扫描产物 `test-results/qe/.static-scan-result.json`；两者均为发起 test-engineer 与全流程收尾的前置条件。首次运行 `static-scan-run.mjs` 需联网经 `npx` 拉取 `jscpd-rs`/`gitleaks-secret-scanner`，建议固化为项目 devDependency 以避免重复下载；离线环境走 `qe.commands` 覆盖或豁免
 - **活跃流程路径**：`.trae/harness-state.json` → `activeProcessPath`；可用环境变量 `HARNESS_PROCESS_PATH` 临时覆盖
 - **流程角色识别**：Hook 读取 `process.md` 时同时识别中文角色名和 agent slug（例如 `开发工程师` / `development-engineer`）
 
 修改 Hook 或配置后，请同步更新 `.trae/harness/spec/mechanical-gates.md`，并核对 `AGENTS.md` §3 权威索引与相关 `agents/*.md` 指针仍指向正确路径（R12：文档与实现同向加强，不得只砍文档）。
+
+## 框架自测（维护者用）
+
+Harness 自带回归自测，用于在修改 Hook / 脚本 / 模板后验证门禁判定逻辑未被破坏：
+
+- **门禁逻辑自检（单元级）**：`node .trae/scripts/gate-selftest.mjs`（薄入口；用例按规则拆在 `.trae/scripts/tests/selftest/`，见该目录 README。纯 Node；覆盖 R3 / R5 / R6 / B1 / R9 / R10 / R11 / R13 / R14 / R15 / R16 / R17 / R18 / R19 / **R20** 最低必测集及 Finding #1 回归，退出码非 0 即失败）。
+- **场景级门禁回归（端到端）**：`node .trae/scripts/gate-scenarios.mjs`（薄入口；套件按场景拆在 `.trae/scripts/tests/scenarios/`，见该目录 README。纯 Node）。它**真正 spawn 框架自己的 5 个可裁决 Hook 入口脚本**（`gate-role-sequence` / `gate-dev-workflow` / `gate-dev-shell` / `gate-toolchain-install` / `gate-stop-workflow`；另有 `gate-subagent-track` 仅落盘顶层 `session_id`、恒放行，由 R5 场景间接覆盖），在隔离 fixture（`test-results/.gate-scenarios/`，经 `HARNESS_PROCESS_PATH` / `HARNESS_GATED_ARTIFACTS_PATH` 指向）上逐条断言 `allow/deny/ask/block`，E2E 判据用 `e2e-run-lib.mjs` 真实计算；覆盖 Greenfield（含 **R19**）/ Feature / Hotfix（**R11** 折叠 + **R20** 确认）/ 对抗健壮性 / **R5** 顶层会话与角色↔路径（`r5-conversation`）/ R14 批次接口测试 / R15 lint / R16 静态扫描 / R17 存储对账 / **R18** 设计审核 / Finding #1 与 Finding #2 回归，退出码非 0 即失败。附 `--verbose` 打印每步 deny/ask/block 首行原因。
+  - **定位**：此套件是**规约框架自身的维护用回归测试**，由早期一次性评估探针（原 `eval/`）沉淀而来；它**不参与任何宿主项目的开发流程**，不被 `hooks.json` / `qe-run.mjs` / `lint-run.mjs` / `static-scan-run.mjs` / `e2e-run.mjs` 引用，全程使用自建隔离 fixture，运行前会快照、运行后会还原 `test-results/e2e/`、`test-results/qe/.lint-result.json`、`test-results/qe/.static-scan-result.json`、R5 运行时标记（`.root-conversation-id.json` / `.dispatched-roles.json`）等产物，不改动 `docs/` 成果物。
+  - **何时运行**：改动任一 Hook、`workflow-gate-lib.mjs`、`e2e-run-lib.mjs`、门禁相关脚本或 `.trae/templates/process.md` 后，先跑 `gate-selftest.mjs` 再跑 `gate-scenarios.mjs`；两者全绿方可提交（呼应 AGENTS.md R12「只可加强，不可放松」——回归失败即意味着门禁被意外放松/破坏）。
+- **`e2e-run-lib` 单测**：`.trae/scripts/e2e-run-lib.test.ts` 使用 vitest（配置见 `.trae/scripts/vitest.config.ts`）。本框架目录不预置 `package.json`，运行前需先在工作区安装 vitest，例如：
+
+```bash
+npm i -D vitest
+npx vitest run --config .trae/scripts/vitest.config.ts
+```
+
+> `playwright.config.ts` 依赖 `@playwright/test`，同样需按 `.trae/harness/spec/mechanical-gates.md` §8.3 与各角色文件的工具链确认流程安装后方可运行 E2E 门禁。
+
+### 项目复盘 skill
+
+迭代结束或流程终止后，可在 Trae 中手动附加 skill `project-retrospective`（`.trae/skills/project-retrospective/`），对照规约评估执行合规性、产出须审核的改进建议，并对已批准项改规约后运行上文「框架自测」。

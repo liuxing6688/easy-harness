@@ -15,6 +15,14 @@
         "timeout": 60
       }
     ],
+    "subagentStart": [
+      {
+        "command": "node .cursor/hooks/gate-subagent-track.mjs",
+        "matcher": ".*",
+        "failClosed": false,
+        "timeout": 10
+      }
+    ],
     "beforeShellExecution": [
       {
         "command": "node .cursor/hooks/gate-dev-shell.mjs",

@@ -3,45 +3,67 @@
   "hooks": {
     "PreToolUse": [
       {
-        "name": "gate-dev-workflow",
-        "enabled": true,
-        "command": "node .trae/hooks/gate-dev-workflow.mjs",
-        "matcher": "Write|Edit|StrReplace|ApplyPatch|Delete|EditNotebook",
-        "failClosed": true,
-        "timeout": 60
+        "matcher": "Write|Edit|MultiEdit|Delete|DeleteFile",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .trae/hooks/gate-dev-workflow.mjs",
+            "timeout": 60
+          }
+        ]
       },
       {
-        "name": "gate-role-sequence",
-        "enabled": true,
-        "command": "node .trae/hooks/gate-role-sequence.mjs",
-        "matcher": "Agent|Task|general_purpose_task",
-        "failClosed": false,
-        "timeout": 60
+        "matcher": "Bash|RunCommand",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .trae/hooks/gate-dev-shell.mjs",
+            "timeout": 60
+          }
+        ]
       },
       {
-        "name": "gate-dev-shell",
-        "enabled": true,
-        "command": "node .trae/hooks/gate-dev-shell.mjs",
-        "matcher": "Bash|Shell|Terminal",
-        "failClosed": true,
-        "timeout": 60
+        "matcher": "Bash|RunCommand",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .trae/hooks/gate-toolchain-install.mjs",
+            "timeout": 60
+          }
+        ]
       },
       {
-        "name": "gate-toolchain-install",
-        "enabled": true,
-        "command": "node .trae/hooks/gate-toolchain-install.mjs",
-        "matcher": "Bash|Shell|Terminal",
-        "failClosed": true,
-        "timeout": 60
+        "matcher": "Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .trae/hooks/gate-role-sequence.mjs",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .trae/hooks/gate-subagent-track.mjs",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [
       {
-        "name": "gate-stop-workflow",
-        "enabled": true,
-        "command": "node .trae/hooks/gate-stop-workflow.mjs",
         "loop_limit": 3,
-        "timeout": 60
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .trae/hooks/gate-stop-workflow.mjs",
+            "timeout": 60
+          }
+        ]
       }
     ]
   }

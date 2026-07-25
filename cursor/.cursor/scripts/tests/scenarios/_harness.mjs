@@ -1,0 +1,818 @@
+/**
+ * 场景自测共享脚手架：fixture 工厂、Hook spawn、check()、E2E/lint/scan 快照。
+ */
+/**
+ * 场景级门禁回归测试（框架维护用，不参与宿主项目开发）。
+ *
+ * 由 `eval/` 下的一次性评估探针（run-gate.mjs / e2e-compute.mjs / probe-blocking.mjs）
+ * 沉淀而来，转为可重复运行的常驻回归套件：
+ *   - 与 `gate-selftest.mjs`（库函数单元级回归）互补，本套件是**端到端**回归——
+ *     真正 spawn 框架自己的 5 个 Hook 入口脚本
+ *     （gate-role-sequence / gate-dev-workflow / gate-dev-shell /
+ *      gate-toolchain-install / gate-stop-workflow），读取其 allow/deny/ask/followup。
+ *   - E2E 门禁结果用框架自己的 `e2e-run-lib.mjs`（parseChromiumResults + computeGateResult）
+ *     真实计算后写入 `test-results/e2e/`（运行前快照、运行后还原，避免污染宿主运行时产物）。
+ *   - 全程使用**隔离 fixture**（写在 `test-results/.gate-scenarios/` 下，经 HARNESS_PROCESS_PATH /
+ *     HARNESS_GATED_ARTIFACTS_PATH 指向），不依赖、不改动宿主项目的 `docs/` 成果物。
+ *
+ * 覆盖场景矩阵：Greenfield(full) / Feature(full) / Hotfix(R11 折叠) / R15 编程规范 lint 门禁 /
+ * R16 静态代码质量门禁（重复代码+安全扫描）/ R17 业务数据存储对账 / R18 设计审核可修复性与需求覆盖 /
+ * 对抗健壮性 / Finding #1（出厂模板阻塞误判）端到端回归。
+ *
+ * 用法：
+ *   node .cursor/scripts/gate-scenarios.mjs           # 运行全部场景
+ *   node .cursor/scripts/gate-scenarios.mjs --verbose # 附带打印每步 deny/ask/followup 首行原因
+ * 退出码非 0 即有场景回归失败，供修改 Hook/脚本/模板后回归验证。
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { parseChromiumResults, computeGateResult } from '../../e2e-run-lib.mjs';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+export const PROJECT_ROOT = path.resolve(__dirname, '../../../..');
+export const HOOKS_DIR = path.join(PROJECT_ROOT, '.cursor/hooks');
+export const SCEN_REL = 'test-results/.gate-scenarios';
+export const SCEN_ROOT = path.join(PROJECT_ROOT, SCEN_REL);
+const E2E_DIR = path.join(PROJECT_ROOT, 'test-results/e2e');
+export const VERBOSE = process.argv.includes('--verbose');
+
+export const HOOK_FILES = {
+  role: path.join(HOOKS_DIR, 'gate-role-sequence.mjs'),
+  write: path.join(HOOKS_DIR, 'gate-dev-workflow.mjs'),
+  shell: path.join(HOOKS_DIR, 'gate-dev-shell.mjs'),
+  toolchain: path.join(HOOKS_DIR, 'gate-toolchain-install.mjs'),
+  stop: path.join(HOOKS_DIR, 'gate-stop-workflow.mjs'),
+};
+
+export let passCount = 0;
+export let failCount = 0;
+export const failures = [];
+
+// ---------------------------------------------------------------------------
+// 通用内容块
+// ---------------------------------------------------------------------------
+export const CONFIRM_SECTION = [
+  '## 用户确认记录',
+  '',
+  '| 确认项 | 时间 | 用户原话摘要 |',
+  '| ------ | ---- | ------------ |',
+  '| 需求摘要 | 2026-01-01 | 已确认 |',
+  '| 技术选型 | 2026-01-01 | 确认采用 Node.js；来源 tech-stack-options.md 方案 A |',
+].join('\n');
+
+/** R20：轻量模式机读确认行 */
+export const LITE_CONFIRM_HOTFIX =
+  '| 工作流模式确认 | 2026-01-01 | 确认采用 workflow_mode: hotfix |';
+export const LITE_CONFIRM_DOCS_ONLY =
+  '| 工作流模式确认 | 2026-01-01 | 确认采用 workflow_mode: docs-only |';
+
+/** hotfix 声明 none 时须含最小影响澄清记录（R9 机读）+ R20 模式确认 */
+export const HOTFIX_CONFIRM_SECTION = [
+  CONFIRM_SECTION,
+  LITE_CONFIRM_HOTFIX,
+  '| hotfix影响面 | 2026-01-01 | 受影响用户：管理员；既有行为：不改变任何 P0 行为；回滚条件：日志展示异常即回滚；已比对 requirement-list.md 全部 P0（R-001），本次修复仅涉及日志格式 |',
+].join('\n');
+
+/** 已 R20 确认但缺 R9 影响面（供 H3b） */
+export const HOTFIX_CONFIRM_NO_JUSTIFICATION = [CONFIRM_SECTION, LITE_CONFIRM_HOTFIX].join('\n');
+
+export const DOCS_ONLY_CONFIRM_SECTION = [CONFIRM_SECTION, LITE_CONFIRM_DOCS_ONLY].join('\n');
+
+export const DISPATCH_SECTION = [
+  '## 当前分派计划',
+  '',
+  '| 任务包编号 | 分派角色 | 并行/串行 | 状态 |',
+  '| ---------- | -------- | --------- | ---- |',
+  '| T0-1 | development-engineer | 串行 | 待开发 |',
+  '',
+  '## 待派发角色列表',
+  '',
+  '| 角色 | 说明 |',
+  '| ---- | ---- |',
+  '| development-engineer | T0-1 |',
+].join('\n');
+
+export const EMPTY_DISPATCH_SECTION = [
+  '## 当前分派计划',
+  '',
+  '| 任务包编号 | 分派角色 | 并行/串行 | 状态 |',
+  '| ---------- | -------- | --------- | ---- |',
+  '',
+  '## 待派发角色列表',
+  '',
+  '| 角色 | 说明 |',
+  '| ---- | ---- |',
+].join('\n');
+
+export const ARTIFACT_REF =
+  '本次已产出 requirement-spec.md、requirement-list.md、detail-design-spec.md、develop-task-list.md。';
+export const BLOCK_OK = ['## 阻塞原因', '', '无'].join('\n');
+
+export const REQ_SPEC =
+  '# requirement-spec.md\n\n## 隐性需求确认记录\n\n| 类别 | 要点 | 用户确认摘要 | 关联需求/§7 追溯 | 状态 | 影响/决策点 |\n| --- | --- | --- | --- | --- | --- |\n| 排查结论 | 已排查，无额外隐性假设 | 用户确认现有描述已完整 | R-001；§7 追溯-001 | 已确认 | 已确认不影响额外范围 |\n';
+export const REQ_LIST =
+  '# requirement-list.md\n\n| 需求编号 | 名称 | 描述 | 模块 | 优先级 |\n| --- | --- | --- | --- | --- |\n| R-001 | 待办新增 | 新增待办项 | core | P0 |\n';
+export const DESIGN_SPEC = '# detail-design-spec.md\n';
+export const TASK_LIST = '# develop-task-list.md\n';
+export const DPL_DIM_HEADER =
+  '| 检查维度 | 问题描述 | 严重等级 | 是否存在 | 是否解决 | 关联成果物 | 关联需求编号 | 建议责任角色 | 修复建议 |';
+export const DPL_DIM_SEP = '| --- | --- | --- | --- | --- | --- | --- | --- | --- |';
+export const DPL_DIMS = [
+  '需求覆盖度',
+  '目标达成性',
+  '功能',
+  '体验',
+  '可行性',
+  'MVP 范围',
+  '任务可执行性',
+  '流程合规性',
+  '架构设计原则',
+  '成果物完整性',
+  '测试可执行性',
+  '安全与合规',
+];
+export function makeCleanDpl(p0Ids = ['R-001']) {
+  const dimRows = DPL_DIMS.map((d) => `| ${d} | 无 | 低 | 否 | | | | | |`).join('\n');
+  const covRows = p0Ids
+    .map((id) => `| ${id} | P0 | AC-${id}-1 可创建待办 | detail-design-spec.md §2 | 用户可创建待办项 | T0-1 | 已覆盖 |`)
+    .join('\n');
+  return [
+    '# 设计问题清单',
+    '',
+    '## 审核问题表',
+    '',
+    DPL_DIM_HEADER,
+    DPL_DIM_SEP,
+    dimRows,
+    '',
+    '## 需求覆盖矩阵',
+    '',
+    '| 需求编号 | 优先级 | 验收标准 | 设计落点 | 设计落点原文摘录 | 任务包 | 覆盖结论 |',
+    '| --- | --- | --- | --- | --- | --- | --- |',
+    covRows,
+    '',
+    '## 审核结论',
+    '',
+    '| 审核轮次 | 结论 | 说明 |',
+    '| --- | --- | --- |',
+    '| 1 | 通过 | 首次审核无未解决问题 |',
+    '',
+  ].join('\n');
+}
+export const DPL_CLEAN = makeCleanDpl(['R-001']);
+export const DPL_UNRESOLVED = [
+  '# 设计问题清单',
+  '',
+  '## 审核问题表',
+  '',
+  DPL_DIM_HEADER,
+  DPL_DIM_SEP,
+  ...DPL_DIMS.map((d) =>
+    d === '需求覆盖度'
+      ? `| ${d} | R-001 无设计落点 | 高 | 是 | 否 | detail-design-spec.md | R-001 | system-architect | 在 §4 补充接口并关联 T0-1 |`
+      : `| ${d} | 无 | 低 | 否 | | | | | |`,
+  ),
+  '',
+  '## 需求覆盖矩阵',
+  '',
+  '| 需求编号 | 优先级 | 验收标准 | 设计落点 | 设计落点原文摘录 | 任务包 | 覆盖结论 |',
+  '| --- | --- | --- | --- | --- | --- | --- |',
+  '| R-001 | P0 | AC-R-001-1 | | | T0-1 | 未覆盖 |',
+  '',
+  '## 审核结论',
+  '',
+  '| 审核轮次 | 结论 | 说明 |',
+  '| --- | --- | --- |',
+  '| 1 | 不通过 | 存在未解决覆盖问题 |',
+  '',
+].join('\n');
+export const GATED_EMPTY = '{}\n';
+// R14 + R17：含非空「## 接口测试报告」与「## 存储对账记录」（接口+E2E 行，合法介质）
+export const TEST_REPORT_API = [
+  '# 测试报告',
+  '',
+  '## 接口测试报告',
+  '',
+  '| 接口 | 请求方法 | 关联需求 | 关联任务包 | 是否通过 |',
+  '| ---- | -------- | -------- | ---------- | -------- |',
+  '| /api/todos | POST | R-001 | T0-1 | 是 |',
+  '',
+  '## 存储对账记录',
+  '',
+  '| 场景类型 | 关联需求 | 关联任务包 | 存储介质 | 对账方式 | 预期存储结果 | 实际存储结果 | 是否通过 | 备注 |',
+  '| -------- | -------- | ---------- | -------- | -------- | ------------ | ------------ | -------- | ---- |',
+  '| 接口 | R-001 | T0-1 | 数据库 | test-results/recon/t0-1-api.json · SELECT id FROM todos | 有行 | 有行 | 是 | |',
+  '| E2E | R-001 | T0-1 | 缓存 | test-results/recon/t0-1-e2e.json · Redis GET todo:1 | 有值 | 有值 | 是 | |',
+  '',
+].join('\n');
+// R14 有接口报告但缺 R17 存储对账（用于 G10c）
+export const TEST_REPORT_API_NO_STORAGE = [
+  '# 测试报告',
+  '',
+  '## 接口测试报告',
+  '',
+  '| 接口 | 请求方法 | 关联需求 | 关联任务包 | 是否通过 |',
+  '| ---- | -------- | -------- | ---------- | -------- |',
+  '| /api/todos | POST | R-001 | T0-1 | 是 |',
+  '',
+].join('\n');
+// R14 豁免后仅需 E2E 对账行（G11c）
+export const TEST_REPORT_STORAGE_E2E_ONLY = [
+  '# 测试报告',
+  '',
+  '## 存储对账记录',
+  '',
+  '| 场景类型 | 关联需求 | 关联任务包 | 存储介质 | 对账方式 | 预期存储结果 | 实际存储结果 | 是否通过 | 备注 |',
+  '| -------- | -------- | ---------- | -------- | -------- | ------------ | ------------ | -------- | ---- |',
+  '| E2E | R-001 | T0-1 | 文件 | test-results/recon/t0-1-e2e.json · 读盘校验落盘文件 | 文件存在 | 文件存在 | 是 | |',
+  '',
+].join('\n');
+
+export function progressSection(rows = []) {
+  return [
+    '## 进度列表',
+    '',
+    '| 角色/开发线 | 任务名称 | 状态 | 说明 |',
+    '| ----------- | -------- | ---- | ---- |',
+    ...rows,
+    '',
+  ].join('\n');
+}
+
+export function greenfieldReady(progressRows = []) {
+  return [
+    '---',
+    'phase: development',
+    'workflow_mode: full',
+    'iterationType: greenfield',
+    'blocking: false',
+    'cancelled: false',
+    '---',
+    '',
+    '# 流程进度记录',
+    '',
+    ARTIFACT_REF,
+    '',
+    CONFIRM_SECTION,
+    '',
+    DISPATCH_SECTION,
+    '',
+    progressSection(progressRows),
+    '',
+    BLOCK_OK,
+    '',
+  ].join('\n');
+}
+
+// R14：含接口测试豁免确认行的用户确认记录 + 无对外接口的 gated-artifacts 声明
+export const API_EXEMPT_CONFIRM = [
+  '## 用户确认记录',
+  '',
+  '| 确认项 | 时间 | 用户原话摘要 |',
+  '| ------ | ---- | ------------ |',
+  '| 需求摘要 | 2026-01-01 | 已确认 |',
+  '| 技术选型 | 2026-01-01 | 确认采用 Node.js |',
+  '| 接口测试豁免 | 2026-01-01 | 纯算法库无对外接口，确认豁免接口测试 |',
+].join('\n');
+export const API_NA_GATED = '{\n  "apiTestApplicability": "n/a",\n  "apiTestApplicabilityReason": "纯算法库无对外接口"\n}\n';
+
+export function greenfieldApiExempt(progressRows = []) {
+  return [
+    '---',
+    'phase: development',
+    'workflow_mode: full',
+    'iterationType: greenfield',
+    'blocking: false',
+    'cancelled: false',
+    '---',
+    '',
+    '# 流程进度记录',
+    '',
+    ARTIFACT_REF,
+    '',
+    API_EXEMPT_CONFIRM,
+    '',
+    DISPATCH_SECTION,
+    '',
+    progressSection(progressRows),
+    '',
+    BLOCK_OK,
+    '',
+  ].join('\n');
+}
+
+export function greenfieldNoDispatch() {
+  return [
+    '---',
+    'phase: development',
+    'workflow_mode: full',
+    'iterationType: greenfield',
+    'blocking: false',
+    'cancelled: false',
+    '---',
+    '',
+    '# 流程进度记录',
+    '',
+    ARTIFACT_REF,
+    '',
+    CONFIRM_SECTION,
+    '',
+    EMPTY_DISPATCH_SECTION,
+    '',
+    progressSection(),
+    '',
+    BLOCK_OK,
+    '',
+  ].join('\n');
+}
+
+export function greenfieldEmpty() {
+  return [
+    '---',
+    'phase: requirement',
+    'workflow_mode: full',
+    'iterationType: greenfield',
+    'blocking: false',
+    'cancelled: false',
+    '---',
+    '',
+    '# 流程进度记录',
+    '',
+    '## 用户确认记录',
+    '',
+    '| 确认项 | 时间 | 用户原话摘要 |',
+    '| ------ | ---- | ------------ |',
+    '',
+    EMPTY_DISPATCH_SECTION,
+    '',
+    BLOCK_OK,
+    '',
+  ].join('\n');
+}
+
+export function featureReady(progressRows = []) {
+  return [
+    '---',
+    'phase: development',
+    'workflow_mode: full',
+    'iterationType: feature',
+    'blocking: false',
+    'cancelled: false',
+    '---',
+    '',
+    '# 流程进度记录（filter feature）',
+    '',
+    ARTIFACT_REF,
+    '',
+    CONFIRM_SECTION,
+    '',
+    DISPATCH_SECTION,
+    '',
+    progressSection(progressRows),
+    '',
+    BLOCK_OK,
+    '',
+  ].join('\n');
+}
+
+export function hotfixProcess({
+  dispatch = true,
+  progressRows = [],
+  withHotfixJustification = true,
+  p0Impact = 'none',
+} = {}) {
+  return [
+    '---',
+    'phase: development',
+    'workflow_mode: hotfix',
+    'iterationType: hotfix',
+    `hotfix_p0_impact: ${p0Impact}`,
+    'blocking: false',
+    'cancelled: false',
+    '---',
+    '',
+    '# 流程进度记录（hotfix）',
+    '',
+    withHotfixJustification ? HOTFIX_CONFIRM_SECTION : HOTFIX_CONFIRM_NO_JUSTIFICATION,
+    '',
+    dispatch ? DISPATCH_SECTION : EMPTY_DISPATCH_SECTION,
+    '',
+    progressSection(progressRows),
+    '',
+    BLOCK_OK,
+    '',
+  ].join('\n');
+}
+
+export function docsOnlyProcess() {
+  return [
+    '---',
+    'phase: development',
+    'workflow_mode: docs-only',
+    'blocking: false',
+    'cancelled: false',
+    '---',
+    '',
+    '# 流程进度记录（docs-only）',
+    '',
+    DOCS_ONLY_CONFIRM_SECTION,
+    '',
+    BLOCK_OK,
+    '',
+  ].join('\n');
+}
+
+export function cancelledProcess() {
+  return [
+    '---',
+    'phase: development',
+    'workflow_mode: full',
+    'iterationType: greenfield',
+    'blocking: false',
+    'cancelled: true',
+    'cancelledAt: 2026-01-01T00:00:00Z',
+    'cancelReason: 用户取消',
+    '---',
+    '',
+    '# 流程进度记录（已取消）',
+    '',
+    CONFIRM_SECTION,
+    '',
+    DISPATCH_SECTION,
+    '',
+    progressSection(['| 开发工程师 | T0-1 | 正在执行 | |']),
+    '',
+    BLOCK_OK,
+    '',
+    '## 取消记录',
+    '',
+    '| 时间 | 触发原话摘要 | 二次确认摘要 |',
+    '| ---- | ------------ | ------------ |',
+    '| 2026-01-01 | 停止此流程 | 已二次确认 |',
+    '',
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// fixture / hook 驱动
+// ---------------------------------------------------------------------------
+export function relToProject(abs) {
+  return path.relative(PROJECT_ROOT, abs).replace(/\\/g, '/');
+}
+
+/** 写入一组 fixture 文件，返回该 fixture 根目录绝对路径 */
+export function writeFixture(name, files) {
+  const root = path.join(SCEN_ROOT, name);
+  fs.rmSync(root, { recursive: true, force: true });
+  for (const [rel, content] of Object.entries(files)) {
+    const abs = path.join(root, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, content, 'utf8');
+  }
+  return root;
+}
+
+export function buildPayload(hook, { role, filePath, command, conversationId }) {
+  let payload;
+  if (hook === 'role') payload = { tool_name: 'Task', tool_input: { subagent_type: role } };
+  else if (hook === 'write') payload = { tool_name: 'Write', tool_input: { path: filePath } };
+  else if (hook === 'shell' || hook === 'toolchain') payload = { command, tool_input: { command } };
+  else payload = {};
+  // R5 机械化补强测试用：模拟 Cursor 真实 payload 里的 conversation_id 字段
+  // （见 workflow-gate-lib.mjs 的 isRootConversationCaller）；未传时保持既有行为不变。
+  if (conversationId !== undefined) payload.conversation_id = conversationId;
+  return payload;
+}
+
+export function runHook({ hook, role, filePath, command, processPath, gatedPath, conversationId }) {
+  const env = { ...process.env };
+  delete env.HARNESS_PROCESS_PATH;
+  delete env.HARNESS_GATED_ARTIFACTS_PATH;
+  if (processPath) env.HARNESS_PROCESS_PATH = processPath;
+  if (gatedPath) env.HARNESS_GATED_ARTIFACTS_PATH = gatedPath;
+
+  const res = spawnSync('node', [HOOK_FILES[hook]], {
+    cwd: PROJECT_ROOT,
+    input: JSON.stringify(buildPayload(hook, { role, filePath, command, conversationId })),
+    encoding: 'utf8',
+    env,
+  });
+
+  let verdict;
+  try {
+    verdict = JSON.parse((res.stdout || '').trim() || '{}');
+  } catch {
+    verdict = { _raw: res.stdout };
+  }
+
+  let outcome;
+  if (hook === 'stop') outcome = verdict.followup_message ? 'followup' : 'allow-stop';
+  else outcome = verdict.permission ?? 'unknown';
+
+  return { outcome, verdict, stderr: res.stderr };
+}
+
+export function check(label, expect, opts) {
+  const { outcome, verdict } = runHook(opts);
+  const ok = outcome === expect;
+  if (ok) {
+    passCount += 1;
+    console.log(`  PASS  expect=${expect} got=${outcome} :: ${label}`);
+  } else {
+    failCount += 1;
+    failures.push({ label, expect, outcome });
+    console.error(`  FAIL  expect=${expect} got=${outcome} :: ${label}`);
+  }
+  if (VERBOSE) {
+    const detail = verdict.user_message || verdict.followup_message;
+    if (detail) console.log(`          ↳ ${String(detail).split('\n')[0].slice(0, 160)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// E2E 结果产物（快照 / 计算 / 还原）
+// ---------------------------------------------------------------------------
+const E2E_FILES = {
+  batch: path.join(E2E_DIR, '.e2e-batch-result.json'),
+  final: path.join(E2E_DIR, '.e2e-final-result.json'),
+};
+const e2eSnapshot = {};
+
+export function snapshotE2e() {
+  for (const [scope, file] of Object.entries(E2E_FILES)) {
+    e2eSnapshot[scope] = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+  }
+}
+
+export function restoreE2e() {
+  for (const [scope, file] of Object.entries(E2E_FILES)) {
+    const snap = e2eSnapshot[scope];
+    if (snap === null) fs.rmSync(file, { force: true });
+    else fs.writeFileSync(file, snap, 'utf8');
+  }
+}
+
+// R15：编程规范（lint）门禁机读产物（test-results/qe/.lint-result.json）——
+// 与 E2E 产物同为受控运行产物，快照/还原避免污染宿主运行时。
+const LINT_FILE = path.join(PROJECT_ROOT, 'test-results/qe/.lint-result.json');
+let lintSnapshot = null;
+
+export function snapshotLint() {
+  lintSnapshot = fs.existsSync(LINT_FILE) ? fs.readFileSync(LINT_FILE, 'utf8') : null;
+}
+
+export function restoreLint() {
+  if (lintSnapshot === null) fs.rmSync(LINT_FILE, { force: true });
+  else fs.writeFileSync(LINT_FILE, lintSnapshot, 'utf8');
+}
+
+export function writeLintPass() {
+  fs.mkdirSync(path.dirname(LINT_FILE), { recursive: true });
+  const result = {
+    gatePassed: true,
+    reason: 'passed',
+    stack: 'node',
+    command: 'npm run lint',
+    exitCode: 0,
+    executedAt: new Date().toISOString(),
+    _note: 'Synthesized by gate-scenarios.mjs for regression only.',
+  };
+  fs.writeFileSync(LINT_FILE, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+}
+
+export function writeLintFail() {
+  fs.mkdirSync(path.dirname(LINT_FILE), { recursive: true });
+  const result = {
+    gatePassed: false,
+    reason: 'lint-failed',
+    stack: 'node',
+    command: 'npm run lint',
+    exitCode: 1,
+    executedAt: new Date().toISOString(),
+    _note: 'Synthesized by gate-scenarios.mjs for regression only.',
+  };
+  fs.writeFileSync(LINT_FILE, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+}
+
+export function clearLint() {
+  fs.rmSync(LINT_FILE, { force: true });
+}
+
+// R16：静态代码质量门禁机读产物（test-results/qe/.static-scan-result.json）——
+// 与 lint 产物同为受控运行产物，快照/还原避免污染宿主运行时。
+const STATIC_SCAN_FILE = path.join(PROJECT_ROOT, 'test-results/qe/.static-scan-result.json');
+let staticScanSnapshot = null;
+
+export function snapshotStaticScan() {
+  staticScanSnapshot = fs.existsSync(STATIC_SCAN_FILE) ? fs.readFileSync(STATIC_SCAN_FILE, 'utf8') : null;
+}
+
+export function restoreStaticScan() {
+  if (staticScanSnapshot === null) fs.rmSync(STATIC_SCAN_FILE, { force: true });
+  else fs.writeFileSync(STATIC_SCAN_FILE, staticScanSnapshot, 'utf8');
+}
+
+// R5 机械化补强：顶层会话 id 落盘于 .cursor/hooks/.root-conversation-id.json——
+// 与 lint/静态扫描产物同为受控运行产物，快照/还原避免污染宿主运行时。
+const ROOT_CONVERSATION_FILE = path.join(HOOKS_DIR, '.root-conversation-id.json');
+let rootConversationSnapshot = null;
+
+export function snapshotRootConversation() {
+  rootConversationSnapshot = fs.existsSync(ROOT_CONVERSATION_FILE)
+    ? fs.readFileSync(ROOT_CONVERSATION_FILE, 'utf8')
+    : null;
+}
+
+export function restoreRootConversation() {
+  if (rootConversationSnapshot === null) fs.rmSync(ROOT_CONVERSATION_FILE, { force: true });
+  else fs.writeFileSync(ROOT_CONVERSATION_FILE, rootConversationSnapshot, 'utf8');
+}
+
+export function writeRootConversation(id) {
+  fs.mkdirSync(path.dirname(ROOT_CONVERSATION_FILE), { recursive: true });
+  fs.writeFileSync(ROOT_CONVERSATION_FILE, JSON.stringify({ rootConversationId: id }), 'utf8');
+}
+
+export function clearRootConversation() {
+  fs.rmSync(ROOT_CONVERSATION_FILE, { force: true });
+}
+
+// R17：对账证据 test-results/recon/*.json——快照/还原 + 场景默认证据
+const RECON_DIR = path.join(PROJECT_ROOT, 'test-results/recon');
+let reconSnapshot = null;
+
+export function snapshotRecon() {
+  reconSnapshot = fs.existsSync(RECON_DIR)
+    ? Object.fromEntries(
+        fs.readdirSync(RECON_DIR).map((f) => [f, fs.readFileSync(path.join(RECON_DIR, f), 'utf8')]),
+      )
+    : null;
+}
+
+export function restoreRecon() {
+  fs.rmSync(RECON_DIR, { recursive: true, force: true });
+  if (reconSnapshot && Object.keys(reconSnapshot).length > 0) {
+    fs.mkdirSync(RECON_DIR, { recursive: true });
+    for (const [f, content] of Object.entries(reconSnapshot)) {
+      fs.writeFileSync(path.join(RECON_DIR, f), content, 'utf8');
+    }
+  }
+}
+
+export function writeReconEvidence(name) {
+  fs.mkdirSync(RECON_DIR, { recursive: true });
+  fs.writeFileSync(
+    path.join(RECON_DIR, name),
+    `${JSON.stringify(
+      {
+        command: 'echo recon-check',
+        exitCode: 0,
+        summary: 'row exists',
+        capturedAt: '2026-01-01T00:00:00.000Z',
+        _note: 'Synthesized by gate-scenarios.mjs for regression only.',
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+}
+
+export function ensureScenarioReconEvidence() {
+  writeReconEvidence('t0-1-api.json');
+  writeReconEvidence('t0-1-e2e.json');
+}
+
+const DISPATCHED_ROLES_FILE = path.join(HOOKS_DIR, '.dispatched-roles.json');
+let dispatchedRolesSnapshot = null;
+
+export function snapshotDispatchedRoles() {
+  dispatchedRolesSnapshot = fs.existsSync(DISPATCHED_ROLES_FILE)
+    ? fs.readFileSync(DISPATCHED_ROLES_FILE, 'utf8')
+    : null;
+}
+
+export function restoreDispatchedRoles() {
+  if (dispatchedRolesSnapshot === null) fs.rmSync(DISPATCHED_ROLES_FILE, { force: true });
+  else fs.writeFileSync(DISPATCHED_ROLES_FILE, dispatchedRolesSnapshot, 'utf8');
+}
+
+export function clearDispatchedRoles() {
+  fs.rmSync(DISPATCHED_ROLES_FILE, { force: true });
+}
+
+export function writeStaticScanResult(result) {
+  fs.mkdirSync(path.dirname(STATIC_SCAN_FILE), { recursive: true });
+  fs.writeFileSync(STATIC_SCAN_FILE, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+}
+
+export function writeStaticScanPass() {
+  writeStaticScanResult({
+    gatePassed: true,
+    duplication: { gatePassed: true, reason: 'passed', command: 'jscpd-rs .', exitCode: 0 },
+    security: { gatePassed: true, reason: 'passed', command: 'gitleaks-secret-scanner', exitCode: 0 },
+    executedAt: new Date().toISOString(),
+    _note: 'Synthesized by gate-scenarios.mjs for regression only.',
+  });
+}
+
+export function writeStaticScanDupFail() {
+  writeStaticScanResult({
+    gatePassed: false,
+    duplication: { gatePassed: false, reason: 'scan-failed', command: 'jscpd-rs .', exitCode: 1 },
+    security: { gatePassed: true, reason: 'passed', command: 'gitleaks-secret-scanner', exitCode: 0 },
+    executedAt: new Date().toISOString(),
+    _note: 'Synthesized by gate-scenarios.mjs for regression only.',
+  });
+}
+
+export function writeStaticScanSecurityFail() {
+  writeStaticScanResult({
+    gatePassed: false,
+    duplication: { gatePassed: true, reason: 'passed', command: 'jscpd-rs .', exitCode: 0 },
+    security: { gatePassed: false, reason: 'scan-failed', command: 'gitleaks-secret-scanner', exitCode: 1 },
+    executedAt: new Date().toISOString(),
+    _note: 'Synthesized by gate-scenarios.mjs for regression only.',
+  });
+}
+
+export function clearStaticScan() {
+  fs.rmSync(STATIC_SCAN_FILE, { force: true });
+}
+
+export function specFor(id, status) {
+  return { title: `[${id}] e2e`, tests: [{ projectName: 'chromium', results: [{ status }] }] };
+}
+
+export function writeE2e(scope, { requiredIds, passed = [], failed = [], skipped = [] }) {
+  const report = {
+    suites: [
+      {
+        file: 'e2e/specs/scenario.spec.js',
+        specs: [
+          ...passed.map((id) => specFor(id, 'passed')),
+          ...failed.map((id) => specFor(id, 'failed')),
+          ...skipped.map((id) => specFor(id, 'skipped')),
+        ],
+      },
+    ],
+  };
+  const gate = computeGateResult(parseChromiumResults(report), requiredIds, new Set());
+  const result = {
+    scope,
+    ...gate,
+    requiredIds,
+    waivedIds: [],
+    playwrightExitCode: gate.allPassed ? 0 : 1,
+    executedAt: new Date().toISOString(),
+    _note: 'Synthesized by gate-scenarios.mjs via real e2e-run-lib for regression only.',
+  };
+  fs.mkdirSync(E2E_DIR, { recursive: true });
+  fs.writeFileSync(E2E_FILES[scope], `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+}
+
+export function clearE2e(scope) {
+  fs.rmSync(E2E_FILES[scope], { force: true });
+}
+
+// ---------------------------------------------------------------------------
+// 场景
+// ---------------------------------------------------------------------------
+export const QUALITY_REPORT_CLEAN = [
+  '# 质量报告',
+  '',
+  '## 审查结论',
+  '',
+  '| 检查维度 | 要点 | 是否存在问题 | 严重等级 | 是否解决 | 说明 |',
+  '| -------- | ---- | ------------ | -------- | -------- | ---- |',
+  '| 代码规范 | 符合设计文档 §5 | 否 | 低 | | |',
+  '',
+  '## 审查结论汇总',
+  '',
+  '- 质量判定：通过',
+  '',
+].join('\n');
+
+export const QE_DONE_ROWS = [
+  '| 开发工程师 | T0-1 | 执行完成 | |',
+  '| 质量工程师 | T0-1 | 执行完成 | |',
+];
+
+/** 套件内手动记账（避免对 import 的 live binding 赋值） */
+export function recordPass(label) {
+  passCount += 1;
+  console.log(`  PASS  :: ${label}`);
+}
+export function recordFail(label, expect, outcome) {
+  failCount += 1;
+  failures.push({ label, expect, outcome });
+  console.error(`  FAIL  :: ${label}`);
+}
+
+export function getScenarioStats() {
+  return { passCount, failCount, failures };
+}
+
+export { path, fs };

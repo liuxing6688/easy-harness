@@ -42,7 +42,7 @@ disable-model-invocation: true
 
 ### 1.2 合规判定维度（摘要）
 
-- **工作流模式**：`workflow_mode` / `iterationType` 是否与用户目标匹配（`workflow-modes.md` 分诊表）。
+- **工作流模式**：`workflow_mode` / `iterationType` 是否与用户目标匹配，轻量模式是否经 R20 确认留痕（`workflow-modes.md` 分诊表 + R20）。
 - **角色与门禁链**：`gate-chain.md` 成果物是否齐全、用户确认是否留痕、`blocking`/`cancelled` 是否正确处理。
 - **开发编排**：分派计划、待派发列表、进度列表（B1 最新状态）、回退计数是否一致。
 - **测试闭环**：批次/最终集成测试与 E2E（`mechanical-gates.md` §8.3）；`hotfix` 是否按 R11 折叠；`gatePassed` 是否达标。
@@ -145,7 +145,7 @@ npx vitest run --config .cursor/scripts/vitest.config.ts
 
 ### 3.3 可选：为新增门禁补场景
 
-若 Phase 3 新增机械判定，在 `gate-selftest.mjs` 或 `gate-scenarios.mjs` 中补最小回归用例，并在变更清单中注明。
+若 Phase 3 新增机械判定，在 `.cursor/scripts/tests/selftest/` 或 `.cursor/scripts/tests/scenarios/` 对应规则/场景文件中补最小回归用例（入口仍为 `gate-selftest.mjs` / `gate-scenarios.mjs`），并在变更清单中注明。
 
 ### 3.4 输出：收尾
 

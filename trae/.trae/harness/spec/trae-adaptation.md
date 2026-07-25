@@ -24,10 +24,15 @@ Trae 原生支持项目级 Subagent（见 <https://docs.trae.cn/ide_subagents>�
 ### 0.3 门禁机制（原生 Hook + 手动兜底双保险）
 
 门禁采用 **Trae 原生 Hook 自动拦截** 与 **顶层代理手动调用自检** 双保险机制：
-- **原生 Hook（第一层，确定性拦截）**：`.trae/hooks.json` 遵循 Trae 标准格式（`PreToolUse` / `Stop` PascalCase 事件 + `name`/`enabled`/`command`/`matcher` 字段），Trae 客户端自动加载并在对应事件触发时执行 Hook 脚本，实现机械确定性拦截。
+- **原生 Hook（第一层，确定性拦截）**：`.trae/hooks.json` 遵循 Trae 标准格式（[Hook 配置参考](https://docs.trae.cn/ide_hook-configuration-reference)）：
+  - **事件**：`PreToolUse` / `SessionStart` / `Stop`（PascalCase）
+  - **结构**：事件下配 `matcher` + 嵌套 `hooks` 数组（`type: "command"` + `command` + `timeout`）
+  - **stdout 契约**：
+    - PreToolUse：`{ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow"|"deny"|"ask", permissionDecisionReason: string, additionalContext: string } }`
+    - Stop：`{}` 放行 / `{ decision: "block", reason: string }` 阻断并注入为新 Query
 - **手动自检（第二层，兜底保障）**：`.trae/rules/gate-protocol.md`（`alwaysApply: true`）强制顶层代理在关键操作前手动调用 `node .trae/scripts/gate-check.mjs <子命令>` 自检，作为 Hook 失效或未覆盖场景的兜底保障。
 
-两层机制共用同一套判定逻辑（`workflow-gate-lib.mjs` + 5 个 `gate-*.mjs`），确保判据一致。
+两层机制共用同一套判定逻辑（`workflow-gate-lib.mjs` + 6 个 `gate-*.mjs`），确保判据一致。
 
 **强制调用清单（手动自检兜底）**：
 
@@ -41,11 +46,36 @@ Trae 原生支持项目级 Subagent（见 <https://docs.trae.cn/ide_subagents>�
 
 **R12（只可加强不可放松）适配**：本方案不放松任何判据——gate 脚本的判定逻辑（R3/R6/R9/R10/R11/R13/B1）完整（同一份 `workflow-gate-lib.mjs`），`gate-selftest` / `gate-scenarios` 全量回归通过。
 
-### 0.4 工具说明
+### 0.4 Hook Matcher 与工具名对应
+
+Trae 原生 PreToolUse / PostToolUse 的 `tool_name` 采用标准化命名（见 [Hook 配置参考](https://docs.trae.cn/ide_hook-configuration-reference)）。本规约 hooks.json 使用的 matcher：
+
+| Matcher | 对应工具名 | 对应 Hook 脚本 | 用途 |
+| ------- | ---------- | ------------- | ---- |
+| `Write\|Edit` | Write / Edit | `gate-dev-workflow.mjs` | R5 顶层写入门禁 + 角色路径校验 |
+| `RunCommand` | 终端命令 | `gate-dev-shell.mjs` + `gate-toolchain-install.mjs` | Shell 命令门禁 + 工具链安装批准 |
+| `Task` | 子任务分派 | `gate-role-sequence.mjs` | R13 角色派发前置校验 + R5 角色记录 |
+| Stop 事件 | - | `gate-stop-workflow.mjs` | R9 / R14–R17 收尾门禁 |
+| SessionStart 事件 | - | `gate-subagent-track.mjs` | R5 顶层会话 ID 记录 |
+
+### 0.5 工具说明
 
 | 工具 | 说明 |
 | ---- | ---- |
 | Agent（发起子 agent） | Trae 原生 Subagent，定义于 `.trae/agents/{name}.md`，按 `description` 匹配调用对应 Subagent |
 | AskUserQuestion | Subagent 工具集不含此工具（已核对官方清单）；需用户确认时在返回结果中标注，由顶层 Agent 代为询问 |
 
-> 正文中「Task」「发起 Task」「子 agent Task」等表述均指 Trae 的 `Agent` 工具调用。
+### 0.6 R5 身份机制适配差异（Trae vs Cursor）
+
+Cursor 有 `subagentStart` 事件，可在子代理创建时记录其 `conversation_id` 用于 R5 顶层身份判定。Trae 没有 `SubagentStart` 事件，R5 机制做以下适配：
+
+- **顶层会话 ID 记录**：用 `SessionStart` 事件替代。首个 SessionStart（顶层会话创建时）触发，记录 `session_id` 为根会话 ID；`recordRootConversationId` 只写入一次（不覆盖），后续子代理的 SessionStart 不会覆盖已记录的根 ID。
+- **跨会话状态隔离（P2-2/P2-3 修复）**：Trae `$TRAE_ENV_FILE`（SessionStart 事件注入的环境变量文件）作为会话级状态共享通道。`gate-subagent-track.mjs` 在 SessionStart 同时调用 `writeRootSessionIdToEnvFile(sessionId)` 将 `ROOT_SESSION_ID` 追加写入 `$TRAE_ENV_FILE`，与持久化文件（`.trae/harness-state.json` 的 `rootConversationId`）形成双源；`readRootConversationId` 采用「env var 优先 + 持久化文件兜底」策略——新会话的 env var 覆盖旧持久化值，消除跨会话陈旧状态导致 R5 误判为 fail-open 的风险。非 SessionStart 上下文（如手动跑测试，无 `$TRAE_ENV_FILE`）仍回退至持久化文件，行为与改造前兼容。
+- **身份字段名**：Trae stdin 通用字段为 `session_id`（非 `conversation_id`），`isRootConversationCaller` 读取 `session_id` 与根 ID 比对。
+- **角色记录**：仍通过 `PreToolUse` + `Task` matcher 在 `gate-role-sequence.mjs` 中调用 `recordDispatchedRole`，不受 SubagentStart 缺失影响。
+
+语义等价：顶层代理亲自执行受门禁操作时一律拒绝，必须通过 Task 派发的子代理执行。
+
+---
+
+> 正文中「Task」「发起 Task」「子 agent Task」等表述均指 Trae 的 Task 工具调用（对应子代理 Subagent）。

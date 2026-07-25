@@ -10,7 +10,7 @@ alwaysApply: true
 
 本项目采用 **Trae 原生 Hook 自动拦截 + 顶层代理手动自检** 双保险机制：
 
-- **原生 Hook（第一层，确定性拦截）**：`.trae/hooks.json` 遵循 Trae 标准格式（`PreToolUse` / `Stop` PascalCase 事件 + `name`/`enabled`/`command`/`matcher` 字段），Trae 客户端自动加载并在对应事件触发时执行 Hook 脚本，实现机械确定性拦截。
+- **原生 Hook（第一层，确定性拦截）**：`.trae/hooks.json` 遵循 Trae 标准格式（`PreToolUse` / `SessionStart` / `Stop` PascalCase 事件 + 嵌套 `hooks` 数组 + `matcher`/`command`/`timeout` 字段），Trae 客户端自动加载并在对应事件触发时执行 Hook 脚本，实现机械确定性拦截。PreToolUse stdout 使用 `hookSpecificOutput.permissionDecision`（`allow`/`deny`/`ask`）；Stop stdout 使用 `{decision:"block", reason}` 阻断收尾。
 - **手动自检（第二层，兜底保障）**：顶层代理在关键操作前仍须手动调用 `gate-check.mjs` 自检，作为 Hook 失效或未覆盖场景的兜底保障。本规则以 `alwaysApply: true` 持续注入上下文，与 `AGENTS.md` §4 / §8 文字约束互补。
 
 两层机制共用同一套判定逻辑（`workflow-gate-lib.mjs` + 5 个 `gate-*.mjs`），确保判据一致。
@@ -21,13 +21,13 @@ alwaysApply: true
 
 顶层代理在下列操作**前**，**必须**先运行对应 gate-check 子命令，读取其 stdout JSON 与退出码（即使原生 Hook 已可能拦截，仍须手动自检以确保兜底）：
 
-| 操作前 | gate-check 子命令 | stdout `allow` → 放行 | stdout `deny` → | stdout `followup_message` → |
+| 操作前 | gate-check 子命令 | `permissionDecision:"allow"` -> 放行 | `permissionDecision:"deny"` -> | `decision:"block"` -> |
 | ------ | ------------------ | -------------------- | -------------- | --------------------------- |
-| 写入 / 编辑 / 删除任意文件（Write / Edit / StrReplace / ApplyPatch / Delete） | `node .trae/scripts/gate-check.mjs dev-write <filepath>` | 可执行写入 | **禁止写入**，须停止并向用户报告 `user_message` / `agent_message` | — |
+| 写入 / 编辑 / 删除任意文件（Write / Edit） | `node .trae/scripts/gate-check.mjs dev-write <filepath>` | 可执行写入 | **禁止写入**，须停止并向用户报告 `permissionDecisionReason` / `additionalContext` | - |
 | 执行 Shell 命令（尤其项目初始化 / 依赖安装 / 包管理） | `node .trae/scripts/gate-check.mjs dev-shell "<command>"` | 可执行 Shell | 禁止执行，须先完成 PM 分派 | — |
 | 执行系统级工具链安装（winget / brew / apt / choco 等） | `node .trae/scripts/gate-check.mjs toolchain "<command>"` | 可执行（须用户已确认并存在有效 `.toolchain-install-approved.json`） | 禁止，须先走 `development-engineer`「检测 → 询问 → 确认 → 安装」流程 | — |
 | 发起角色 Agent 分派（`system-architect` / `requirement-reviewer` / `development-engineer` / `quality-engineer` / `test-engineer`） | `node .trae/scripts/gate-check.mjs role <role-name>` | 可分派 | 禁止分派，须先补齐前置成果物或解除阻塞 | — |
-| 拟结束当前回合（stop / 向用户交付总结） | `node .trae/scripts/gate-check.mjs stop` | 可收尾 | — | **须继续推进**：按 `followup_message` 分派对应角色后再次调用 |
+| 拟结束当前回合（stop / 向用户交付总结） | `node .trae/scripts/gate-check.mjs stop` | 可收尾 | — | **须继续推进**：按 `reason` 分派对应角色后再次调用 |
 
 > `project-manager` / `requirements-analyst` 不在 R13 门禁表（恒放行），但仍建议调用 `role` 子命令以确认流程状态。
 
@@ -36,16 +36,16 @@ alwaysApply: true
 | 退出码 | 含义 | 顶层代理动作 |
 | ------ | ---- | ------------ |
 | `0` | 放行 / 可收尾 | 继续执行原操作 |
-| `1` | 拒绝（`deny`） | **立即停止**原操作；不得改用其他工具绕过（如 Write 被拒后改用 Shell 写文件）；向用户展示 `agent_message` 并说明须先完成的前置步骤 |
-| `2` | 须继续推进（`followup_message`，仅 `stop` 子命令） | 不得收尾；按 `followup_message` 指引分派对应角色，完成后再调 `stop` 复检 |
+| `1` | 拒绝（`deny`） | **立即停止**原操作；不得改用其他工具绕过（如 Write 被拒后改用 Shell 写文件）；向用户展示 `additionalContext` 并说明须先完成的前置步骤 |
+| `2` | 须继续推进（`decision:"block"`，仅 `stop` 子命令） | 不得收尾；按 `reason` 指引分派对应角色，完成后再调 `stop` 复检 |
 
 ## 3. gate-check 子命令与内部脚本映射
 
 | gate-check 子命令 | 内部调用脚本 | 检查内容 |
 | ----------------- | ------------ | -------- |
 | `dev-write` | `gate-dev-workflow.mjs` | 传入 `{tool_input:{path}}`，检查 R3/R6/R9/R10 |
-| `dev-shell` | `gate-dev-shell.mjs` | 传入 `{command}`，检查受控 Shell 模式 + dev gate |
-| `toolchain` | `gate-toolchain-install.mjs` | 传入 `{command}`，检查工具链安装批准标记 |
+| `dev-shell` | `gate-dev-shell.mjs` | 传入 `{tool_input:{command}}`，检查受控 Shell 模式 + dev gate |
+| `toolchain` | `gate-toolchain-install.mjs` | 传入 `{tool_input:{command}}`，检查工具链安装批准标记 |
 | `role` | `gate-role-sequence.mjs` | 传入 `{tool_input:{subagent_type}}`，检查 R13 成果物门禁链 |
 | `stop` | `gate-stop-workflow.mjs` | 无载荷，检查流程是否闭环 |
 

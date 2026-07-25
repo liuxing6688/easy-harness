@@ -6,6 +6,8 @@ test-results/
 # 工具链安装批准标记：含本机安装路径与用户确认摘要的临时授权状态（默认 60 分钟有效，
 # 见 harness.config.json → toolchain），不应作为模板内容或跨机器/跨项目状态被提交。
 .cursor/hooks/.toolchain-install-approved.json
+.cursor/hooks/.root-conversation-id.json
+.cursor/hooks/.dispatched-roles.json
 
 # 常见依赖/构建产物目录（按目标项目实际技术栈增补，非穷举；不影响门禁路径判定）
 node_modules/

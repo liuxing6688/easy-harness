@@ -1,18 +1,16 @@
 #!/usr/bin/env node
 /**
  * stop 门禁：流程未完成时注入 followup，防止开发后直接收尾。
- * 判据顺序为 .trae/harness/spec/mechanical-gates.md §8.2 的唯一权威定义，修改行为须同步更新该节。
- * 自锁防护（.trae/harness/spec/mechanical-gates.md §8.4）：见 gate-dev-workflow.mjs 顶部注释，策略一致
+ * 判据顺序的说明权威见 `.trae/harness/spec/mechanical-gates.md` §8.2（执行权威：Hook/脚本），修改行为须同步更新该节。
+ * 自锁防护（`.trae/harness/spec/mechanical-gates.md` §8.4）：见 gate-dev-workflow.mjs 顶部注释，策略一致
  *（此处「fail-open」等价于放行/不注入 followup，即 `{}`）。
  */
-function failOpenAllow(context, err) {
+function failOpenAllow(context, err, lib) {
   process.stderr.write(`[gate-stop-workflow] fail-open (${context}): ${err?.message ?? err}\n`);
-  if (globalThis.__gateLib?.recordFailOpenEvent) {
-    try {
-      globalThis.__gateLib.recordFailOpenEvent('gate-stop-workflow', context, err);
-    } catch {
-      // 写日志失败不影响 fail-open 放行
-    }
+  try {
+    lib?.recordFailOpenEvent?.('gate-stop-workflow', context, err);
+  } catch {
+    /* 落盘失败不影响 fail-open 放行 */
   }
   process.stdout.write(JSON.stringify({}));
   process.exit(0);
@@ -28,8 +26,14 @@ async function main() {
   }
 
   const fs = await import('node:fs');
-  const { getActiveProcessPath, output, readProcessMd, parseWorkflowState, recordHotfixP0SoftReminder } = lib;
-  globalThis.__gateLib = lib;
+  const {
+    getActiveProcessPath,
+    output,
+    readProcessMd,
+    parseWorkflowState,
+    recordHotfixP0SoftReminder,
+    checkHotfixP0InterfaceStorageMention,
+  } = lib;
 
   function exitAllow() {
     output({});
@@ -37,7 +41,8 @@ async function main() {
   }
 
   function exitFollowup(message) {
-    output({ followup_message: message });
+    // Trae Stop stdout 契约：{ decision: 'block', reason: '...' } 阻断停止并注入为新 Query
+    output({ decision: 'block', reason: message });
     process.exit(0);
   }
 
@@ -59,10 +64,10 @@ async function main() {
       exitAllow();
     }
 
-    // R9 软性提醒（非阻塞，见 .trae/harness/spec/gate-chain.md §5 R9 脚注第 4 条 / workflow-gate-lib 的
+    // R9 软性提醒（非阻塞，见 `.trae/harness/spec/gate-chain.md` R9 脚注第 4 条 / workflow-gate-lib 的
     // checkHotfixP0InterfaceStorageMention）：P0 影响的 hotfix 唯一测试通道完成后，
     // 若测试报告未提及接口/存储关键字，写一次性提醒到 process.md，但绝不影响本次
-    // allow/followup 判定--任何异常均 best-effort 吞掉，不得导致 stop 门禁行为改变。
+    // allow/followup 判定——任何异常均 best-effort 吞掉，不得导致 stop 门禁行为改变。
     if (state.workflowMode === 'hotfix' && state.finalTestRowComplete && state.finalE2ePassed) {
       try {
         recordHotfixP0SoftReminder?.(content);
@@ -74,6 +79,22 @@ async function main() {
     // 放行（全流程测试闭环）：finalTestRequired && finalTestComplete && lintPassed（R15）
     // && staticScanPassed（R16）
     if (state.finalTestRequired && state.finalTestComplete && state.lintPassed && state.staticScanPassed) {
+      // P2-6 修复（R12 加强：软提醒→硬门禁）：P0 影响的 hotfix 是最高风险场景，唯一测试通道
+      // 已通过、即将放行收尾时，若本次测试报告仍缺结构化「## 接口测试报告」「## 存储对账记录」
+      // 真实数据行，则升级为 Stop 硬门禁（阻断收尾）。复用 checkHotfixP0InterfaceStorageMention
+      // 的判定（非 P0 / 非 hotfix 时 applicable=false，自动跳过，不影响其他模式）。
+      // 闭合 §8.4 披露的「P0 影响 hotfix 接口/存储验证真实机制空白」。
+      if (state.workflowMode === 'hotfix' && state.finalTestRowComplete && state.finalE2ePassed) {
+        const p0Check = checkHotfixP0InterfaceStorageMention(content);
+        if (p0Check.applicable && p0Check.needsReminder) {
+          const missing = [];
+          if (!p0Check.mentionsInterface) missing.push('## 接口测试报告（须含真实数据行）');
+          if (!p0Check.mentionsStorage) missing.push('## 存储对账记录（须含真实数据行）');
+          exitFollowup(
+            `【流程门禁】（R9 升级·hotfix P0 硬门禁）唯一测试通道已通过（finalE2ePassed=true），但本次测试报告缺失：${missing.join('、')}。P0 影响的 hotfix 是最高风险场景，R14/R17 机读硬门禁按 R11 不并入折叠通道，此处为最低限度结构性补强。请由 test-engineer 在本次测试报告（process.md 引用或 test-report.md）补全对应章节（须含真实数据行）后再收尾。若本次热修确未触及接口或业务数据存储，须由 system-architect 在 gated-artifacts.json 声明 apiTestApplicability:"n/a" 和/或 storageReconciliationApplicability:"n/a" 且项目经理在 process.md「## 用户确认记录」补对应豁免确认。`,
+          );
+        }
+      }
       exitAllow();
     }
 
@@ -85,23 +106,23 @@ async function main() {
     }
 
     // 待分派 QE
-    if (state.devComplete && !state.hasQaRecord) {
+    if (state.devComplete && !state.hasQeRecord) {
       exitFollowup(
         '【流程门禁】开发已标记完成，但尚未分派质量工程师。请先调用 project-manager 分派 quality-engineer 并发起 QE Task。',
       );
     }
 
     // QE 未完成
-    if (state.devComplete && state.hasQaRecord && !state.qaComplete) {
+    if (state.devComplete && state.hasQeRecord && !state.qeComplete) {
       exitFollowup(
-        '【流程门禁】质量工程师审核尚未完成。请继续 quality-engineer Task，不得宣告项目完成。',
+        '【流程门禁】质量审核尚未完成。请继续 quality-engineer Task，不得宣告项目完成。',
       );
     }
 
     const isHotfix = state.workflowMode === 'hotfix';
     const isDocsOnly = state.workflowMode === 'docs-only';
 
-    if (!isDocsOnly && state.qaComplete) {
+    if (!isDocsOnly && state.qeComplete) {
       // R15：编程规范（lint）硬门禁——QE 记录完成后、推进测试/收尾前，lint 必须通过。
       if (!state.lintPassed) {
         exitFollowup(
@@ -141,7 +162,7 @@ async function main() {
         }
         if (state.batchTestRowComplete && state.batchE2ePassed && !state.batchStorageReconPresent) {
           exitFollowup(
-            '【流程门禁】（R17）本批次集成测试记录与批次 E2E 均已完成，但存储对账机读判据未满足。请由 test-engineer 在测试报告补全非空「## 存储对账记录」：须含适用分类型行（未豁免 R14 须含接口+非「不适用」介质行；未豁免 E2E 须含 E2E+非「不适用」介质行；至少一条真实对账适用行）；每行「关联任务包/对账方式/预期存储结果/实际存储结果/是否通过」非空；「存储介质」为数据库/文件/缓存/对象存储/其他/不适用（「其他」须备注具体系统；「不适用」仅用于无写入任务包留痕且须备注理由，不计入分类型真实对账）；且进度列表中已完成批次测试的任务包编号须全部出现在对账「关联任务包」列（见 .trae/harness/spec/mechanical-gates.md §8.3）。若本项目确无业务数据持久化，须由 system-architect 在 gated-artifacts.json 声明 storageReconciliationApplicability:"n/a" 且项目经理在 process.md「## 用户确认记录」补一行存储对账豁免确认，方可豁免本判据。',
+            '【流程门禁】（R17）本批次集成测试记录与批次 E2E 均已完成，但存储对账机读判据未满足。请由 test-engineer 在测试报告补全非空「## 存储对账记录」：须含适用分类型行（未豁免 R14 须含接口+非「不适用」介质行；未豁免 E2E 须含 E2E+非「不适用」介质行；至少一条真实对账适用行）；每行「关联任务包/对账方式/预期存储结果/实际存储结果/是否通过」非空；「存储介质」为数据库/文件/缓存/对象存储/其他/不适用（「其他」须备注具体系统；「不适用」仅用于无写入任务包留痕且须备注理由，不计入分类型真实对账）；且进度列表中已完成批次测试的任务包编号须全部出现在对账「关联任务包」列（见 `.trae/harness/spec/mechanical-gates.md` §8.3）。若本项目确无业务数据持久化，须由 system-architect 在 gated-artifacts.json 声明 storageReconciliationApplicability:"n/a" 且项目经理在 process.md「## 用户确认记录」补一行存储对账豁免确认，方可豁免本判据。',
           );
         }
         if (!state.batchTestComplete) {
@@ -166,8 +187,9 @@ async function main() {
 
     exitAllow();
   } catch (err) {
-    failOpenAllow('runtime', err);
+    failOpenAllow('runtime', err, lib);
   }
 }
 
 main();
+

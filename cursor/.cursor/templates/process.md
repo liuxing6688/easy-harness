@@ -23,7 +23,8 @@ pending_roles: []
 | ------ | ---- | ------------ |
 
 > 技术选型确认示例：`| 技术选型 | YYYY-MM-DD | 确认采用 …；来源 tech-stack-options.md 方案 A |`（R18 机读：确认项或摘要须含「技术选型/技术栈」且含确认语义）。
-> hotfix 无 P0 影响示例：`| hotfix影响面 | YYYY-MM-DD | 已比对 requirement-list.md 全部 P0（R-001~R-xxx），本次修复仅涉及…，不改变任何 P0 行为 |`（R9 机读：声明 `hotfix_p0_impact: none` 时确认项或摘要须含「hotfix影响面」）。
+> 轻量模式确认示例：`| 工作流模式确认 | YYYY-MM-DD | 确认采用 workflow_mode: hotfix；AskQuestion「修缺陷」 |`（R20 机读；AskQuestion 选项须含流程摘要，固定文案见 `workflow-modes.md` R20 表）。
+> hotfix 无 P0 影响示例：`| hotfix影响面 | YYYY-MM-DD | 受影响用户：…；既有行为：不改变…；回滚条件：…；已比对 requirement-list.md 全部 P0（R-001~R-xxx），本次修复仅涉及…，不改变任何 P0 行为 |`（R9 机读：声明 `hotfix_p0_impact: none` 时确认项或摘要须含「hotfix影响面」「受影响用户」「既有行为」「回滚条件」与 P0 判断依据）。
 
 ## 当前分派计划
 

@@ -12,7 +12,7 @@
 | 下一角色 | 必须已存在且有效的成果物 | 流程状态要求 |
 | -------- | ------------------------ | ------------ |
 | 需求分析师 | 项目经理已记录用户目标于 `process.md` | 无阻塞 |
-| 系统架构师 | `requirement-spec.md`、`requirement-list.md`；用户已确认需求摘要 | 无阻塞 |
+| 系统架构师 | `requirement-spec.md`（含结构完整、关联需求与 §7 追溯的「隐性需求确认记录」，R19 机读）、`requirement-list.md`；用户已确认需求摘要 | 无阻塞 |
 | 需求评审专家 | `detail-design-spec.md`、`develop-task-list.md`；用户已确认技术选型（`## 用户确认记录` 含技术选型/技术栈确认行，R18 机读） | 无阻塞 |
 | 开发工程师 | 同上 + `design-problem-list.md` 设计审核通过（R18：12 维齐全、可修复字段完备、P0 覆盖矩阵含验收标准与设计落点原文摘录且全部「已覆盖」、审核结论为通过/复审通过、无未解决问题）；项目经理已完成分派 | 无阻塞 |
 | 质量工程师 | 开发任务对应的功能代码与单元测试；对应开发线状态为执行完成 | 无阻塞 |
@@ -21,12 +21,14 @@
 
 > **两级集成测试 + E2E 机械门禁**：测试工程师执行两类集成测试——①**批次集成测试**：每批次 QE 通过后对本批次新交付任务包做集成测试，`gatePassed≠true` 时视为本批次集成测试未完成，**不得推进下一批次**；②**最终整体集成测试**：全部任务包与各批次 E2E 闭环后对整个产品做端到端集成测试，`gatePassed≠true` 时**不得宣告项目完成**。`测试判定`（最终交付依据）以**最终整体集成测试**（含最终 E2E）结论为准。执行命令、产物路径、浏览器范围与 `gatePassed` 公式的唯一权威定义见 `mechanical-gates.md` §8.3。
 
-**`hotfix` 模式门禁链**：项目经理记录目标 →（**R9 设计前置校验**）→ 开发工程师 → QE → 测试；跳过需求分析师与系统架构师，但**不跳过** PM 分派与 QE/测试。
+**`hotfix` 模式门禁链**：项目经理记录目标 →（**R20** 工作流模式确认）→（**R9** 最小影响澄清 + 设计前置校验）→ 开发工程师 → QE → 测试；跳过完整需求分析师与系统架构师阶段，但**不跳过** PM 分派与 QE/测试。
+
+> **R20（轻量模式确认）**：`hotfix`/`docs-only`/`single-task` 须 AskQuestion +「工作流模式确认」机读行后才生效；定义见 `workflow-modes.md`。未确认时 `getWorkflowMode` 按 `full`，且 `gate-role-sequence` 拒绝受门禁角色。
 
 > **R9（hotfix 设计/E2E 前置校验）**：hotfix 虽豁免 R3 四件成果物，但进入开发前 PM 须校验前置，任一不满足**不得**分派开发工程师，须标记 `blocking` 并 `AskQuestion` 请用户决策：
 > 1. **设计存在性**（机械门禁，`checkHotfixDesign`）：当前活跃 `process.md` 基目录下须存在 `detail-design-spec.md`。缺失时，PM 可分派 **system-architect** 执行「最小热修设计微任务」（仅补 bug 影响面涉及的设计章节，见 `system-architect.md`），或由用户指认既有设计路径——**禁止**项目经理或顶层代理代写设计（R5）。
 > 2. **E2E 适用性可解析**（文字约束，无机械兜底）：项目有 UI 且 `e2e/specs/**` 已有对应 P0 用例，**或** `gated-artifacts.json` 已声明 `e2eApplicability:"n/a"` 且 `## 用户确认记录` 含 E2E 豁免（`mechanical-gates.md` §8.3）。两者皆无时，PM 请用户确认豁免后由 **system-architect** 在同一微任务内补写 `gated-artifacts.json`。
-> 3. **P0 影响面**（机械门禁，`checkHotfixP0Impact`）：frontmatter 须声明 `hotfix_p0_impact: none` 或 `p0`；**声明 `none` 时，须在 `## 用户确认记录` 补一行含「hotfix影响面」关键词的判断依据（说明排查了哪些 P0 编号、为何排除），供 Hook 机读**；若为 `p0`（热修影响 P0 行为），须改走 `full` 或先完成 R18 需求评审通过后再分派 DE。
+> 3. **最小影响澄清与 P0 影响面**（机械门禁，`checkHotfixP0Impact`）：frontmatter 须声明 `hotfix_p0_impact: none` 或 `p0`；**声明 `none` 时，须在 `## 用户确认记录` 补一行「hotfix影响面」记录，写明受影响用户、既有行为是否变化、回滚条件、排查的 P0 编号及排除依据，供 Hook 机读**。这是 hotfix 对完整 RA 苏格拉底澄清的最低补强，项目经理必须向用户核验，不得自行推断；若为 `p0`（热修影响 P0 行为），须改走 `full` 或先完成 R18 需求评审通过后再分派 DE。
 > 4. **P0 影响的接口/存储软性提醒**（非阻塞，本次报告结构化章节检测，`checkHotfixP0InterfaceStorageMention`/`recordHotfixP0SoftReminder`）：`hotfix_p0_impact: p0` 时，R14/R17 机读硬门禁仍**不并入** hotfix 折叠通道（见 `mechanical-gates.md` §8.3 适用范围）；但 `gate-stop-workflow` 在唯一测试通道（最终 E2E `gatePassed=true`）完成后，会对**本次**测试报告（`process.md` 显式引用的 `docs/.../test/*.md`，否则规范名 `test-report.md`；**不扫描**整个 `docs/test/` 以免历史报告抑制提醒）校验是否含非空「## 接口测试报告」「## 存储对账记录」真实数据行，缺失时向 `process.md` 追加一次性「## 门禁软性提醒（非阻塞）」记录，**不阻塞收尾、不影响 `gatePassed`**，仅供 PM/人工审查时留意本次热修是否实际涉及接口或业务数据存储、是否需要补充验证记录。
 >
 > hotfix 只在前端省去 RA/SA，**后端 QE + 集成测试 + E2E 一律不省**（`mechanical-gates.md` §8.3 适用范围含 hotfix）；但测试环节按 **R11** 折叠为单次通道（不再区分批次集成测试与最终整体集成测试，见 `mechanical-gates.md` §8.2/§8.3），消除"一次性小改动被迫走两轮测试工程师"的流程冗余，严格程度不降低。
@@ -37,6 +39,7 @@
 
 - `design-problem-list.md` 设计审核未通过：存在未解决问题，或缺 R18 机读要件（12 维/可修复字段/`## 需求覆盖矩阵` 含验收标准/P0 全部「已覆盖」/`## 审核结论` 为通过或复审通过）
 - 未经用户确认的需求文档
+- `requirement-spec.md`「6. 隐性需求确认记录」缺少完整、枚举合法、关联 `R-编号` 与 §7 追溯的真实数据行，或待决假设未注明责任方与最晚决策点（R19，`gate-role-sequence` 拒绝发起 system-architect）
 - 仅有 `tech-stack-options.md` 而无 `detail-design-spec.md`
 - 设计文档技术栈未经用户明确确认（`## 用户确认记录` 无技术选型/技术栈确认行）
 - `process.md` 处于阻塞状态
@@ -55,5 +58,5 @@
 - 非 `hotfix`/`docs-only` 迭代缺任一四件成果物（`requirement-spec.md`、`requirement-list.md`、`detail-design-spec.md`、`develop-task-list.md`）或未被 `process.md` 引用时，`gate-dev-workflow` / `gate-dev-shell` 机制拒绝（R3）
 - 试图在 `cancelled: true` 的 `process.md` 上继续推进流程或将其作为分派依据（R10，机制拒绝：`isCancelledProcessFile`）
 
-**用户确认留痕**：凡须用户确认的事项（需求摘要、技术选型等），项目经理须在 `process.md` 的 `## 用户确认记录` 表中追加一行，含确认项、时间、用户原话摘要。
+**用户确认留痕**：凡须用户确认的事项（需求摘要、技术选型、**工作流模式（R20）**等），项目经理须在 `process.md` 的 `## 用户确认记录` 表中追加一行，含确认项、时间、用户原话摘要。轻量模式另须满足 `workflow-modes.md` R20 机读格式，否则 Hook 按 `full` 处理并拒绝受门禁角色 Task。
 

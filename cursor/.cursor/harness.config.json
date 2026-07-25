@@ -91,7 +91,9 @@
       ".cursor/harness-state.json",
       ".cursor/hooks.json",
       ".cursor/harness.config.json",
-      ".cursor/hooks/.toolchain-install-approved.json"
+      ".cursor/hooks/.toolchain-install-approved.json",
+      ".cursor/hooks/.root-conversation-id.json",
+      ".cursor/hooks/.dispatched-roles.json"
     ]
   },
   "gatedShellPatterns": [

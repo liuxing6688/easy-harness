@@ -14,7 +14,7 @@
 | R5 | 顶层代理不得代行子角色职责，含不得代写受门禁保护路径 | `AGENTS.md` §5.1 |
 | R6 | `.trae/scripts\|agents\|hooks/**` 三目录纳入机制门禁 | `mechanical-gates.md` §8.1 Hook 一览表 |
 | R8 | 禁止越级发起 Task | `AGENTS.md` §5.8 |
-| R9 | hotfix 开发前须校验设计存在性、E2E 适用性与 `hotfix_p0_impact`；声明 `none` 须留痕「hotfix影响面」判断依据；P0 影响须 RR 或改走 full；P0 影响时另有本次报告接口/存储结构化章节软性提醒（非阻塞） | `gate-chain.md` `hotfix` 门禁链脚注；`checkHotfixDesign` / `checkHotfixP0Impact` / `checkHotfixP0InterfaceStorageMention` / `recordHotfixP0SoftReminder` |
+| R9 | hotfix 开发前须校验设计存在性、E2E 适用性与 `hotfix_p0_impact`；声明 `none` 须留痕「hotfix影响面」判断依据；P0 影响须 RR 或改走 full；P0 影响时另有本次报告接口/存储结构化章节硬门禁（P2-6 升级：软提醒留痕 + Stop 阻断收尾） | `gate-chain.md` `hotfix` 门禁链脚注；`checkHotfixDesign` / `checkHotfixP0Impact` / `checkHotfixP0InterfaceStorageMention` / `recordHotfixP0SoftReminder` |
 | B1 | `## 进度列表` 按任务包编号取最新有效状态，作废行为 tombstone | `mechanical-gates.md` §8.2 stop 门禁判据脚注 |
 | R10 | 流程终止不可逆：确认取消后 Hook 永久冻结 `process.md` | `workflow-modes.md`；`AGENTS.md` §5.19；`workflow-gate-lib.mjs` 的 `isCancelledProcessFile`/`isProcessFilePath` |
 | R11 | hotfix 批次/最终测试折叠为单次通道，判据与执行器不降低 | `mechanical-gates.md` §8.2（唯一权威定义）；`gate-chain.md` `hotfix` 门禁链脚注；`mechanical-gates.md` §8.3 适用范围 |

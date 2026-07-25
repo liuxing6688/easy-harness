@@ -2,27 +2,20 @@
 
 跨技术栈 AI 编程流程规约。本仓库是**多适配容器**：同一套 Harness Engineering 通用规约，按不同编辑器/Agent 工具各维护一份**以自身目录为根、彼此平级、互不耦合**的完整适配。
 
+**建议阅读顺序**
+
+1. **选型与开工**：本页「适配一览」→「工作区根」→ 对应适配 README 的「快速开始」
+2. **理解流程**：各适配 README 的框架全景 / 工作流模式（含 R20 轻量确认）
+3. **改规约 / 维护**：各适配「规约权威分层」与「框架自测」；本页「未来扩展」仅在新增适配时需要
+
 ## 适配一览
 
 | 适配目录 | 说明 | 状态 |
 | -------- | ---- | ---- |
-| `cursor/` | 适配 Cursor（自动 Hook 门禁、7 子角色、脚本/模板、E2E / R14 / R17 / R15–R16） | 可用 |
-| `trae/` | 适配 Trae（原生 Hook + `gate-check` 手动兜底双保险、7 Subagent、脚本/模板、同上门禁族） | 可用 |
+| `cursor/` | 适配 Cursor（自动 Hook 门禁、7 子角色、脚本/模板；含 R5 会话追踪与角色↔路径校验） | 可用 |
+| `trae/` | 适配 Trae（原生 Hook + `gate-check` 手动兜底双保险、7 Subagent、脚本/模板；同上门禁族） | 可用 |
 
-两者均已采用**薄宪章架构**：根 `AGENTS.md` 只常驻编排硬约束与权威索引；客观判据以 Hook/脚本为**执行权威**；长公式与细则在各自 `{.cursor|.trae}/harness/spec/`；角色操作细则在 `agents/*`（Task 时注入）。**根文件变薄 ≠ 规约变松。** 完整分层说明见各适配 README「规约权威分层」，例如 [`cursor/README.md`](cursor/README.md)、[`trae/README.md`](trae/README.md)。
-
-> **各适配共享要点**（细节以各适配权威分层为准，此处仅容器层速览）：
->
-> - **宪章**：`AGENTS.md`（角色指针、R12、顶层禁令与回合自检、模式/门禁链摘要、禁止绕过 Hook）。
-> - **说明权威**：`harness/spec/mechanical-gates.md`（E2E / R11 / R14–R17 公式、双要素豁免、能力边界）、`gate-chain.md`、`workflow-modes.md` 等。
-> - **设计与评审**：`detail-design-spec.md` 定义架构原则与代码/安全通则；设计问题清单经 **R18** 机读后方可进入开发。
-> - **QE / 测试硬门禁**：R15 lint、R16 静态扫描（重复代码 + 密钥扫描）；批次集成含 **R17 存储对账**（数据库/文件/缓存/对象存储等均触发）；无对外接口 / 无 UI / 无持久化等走**双要素豁免**（仅一项不生效）。
-> - **工具差异**：Cursor 以 Hook 自动拦截为主；Trae 为原生 Hook + `gate-check.mjs` 双保险（见 `trae/.trae/harness/spec/trae-adaptation.md`）。
-
-## 前置条件
-
-- 各适配的门禁与初始化脚本依赖 **`Node.js >= 18`**（执行 `.mjs`；R16 静态扫描亦经 `npx` 跨技术栈获取工具）。
-- 目标项目的业务技术栈不限；具体运行时、包管理器与测试工具由系统架构师在设计阶段声明。
+> **切勿**把外层 `easy-harness/` 当作工作区根——容器层没有 `.cursor/` / `.trae/` / `AGENTS.md`，门禁与角色会**静默失效**。正确打开方式见下一节。
 
 ## 工作区根（重要）
 
@@ -31,7 +24,31 @@
 - 直接把对应适配目录（如 `easy-harness/cursor/`、`easy-harness/trae/`）作为工作区根打开；或
 - 把该适配目录的**全部内容**复制到宿主项目根，再以宿主项目为工作区根。
 
-> **切勿**把外层 `easy-harness/` 当作工作区根——容器层没有具体适配的机件（如 `.cursor/`、`.trae/`、`AGENTS.md`），工具会找不到门禁与子角色定义，整套规约将**静默失效**。
+日常用法、目录结构、配置与自测命令见各适配 README：
+
+- [`cursor/README.md`](cursor/README.md)
+- [`trae/README.md`](trae/README.md)
+
+## 前置条件
+
+- 各适配的门禁与初始化脚本依赖 **`Node.js >= 18`**（执行 `.mjs`；R16 静态扫描亦经 `npx` 跨技术栈获取工具）。
+- Trae 适配另需 **Trae IDE ≥ v3.5.67**（Subagent 目录 + Hooks），详见 [`trae/README.md`](trae/README.md)。
+- 目标项目的业务技术栈不限；具体运行时、包管理器与测试工具由系统架构师在设计阶段声明。
+
+## 共享能力速览
+
+两者均已采用**薄宪章架构**：根 `AGENTS.md` 只常驻编排硬约束与权威索引；客观判据以 Hook/脚本为**执行权威**；长公式与细则在各自 `{.cursor|.trae}/harness/spec/`；角色操作细则在 `agents/*`（Task 时注入）。**根文件变薄 ≠ 规约变松。** 完整分层说明见各适配 README「规约权威分层」。
+
+| 主题 | 要点 |
+| ---- | ---- |
+| **编排** | 7 角色分工；顶层不得代写（**R5**）或越级分派（**R8**）；PM 维护 `process.md` |
+| **模式** | `full` / `hotfix` / `docs-only` / `single-task`；轻量模式须 **R20**（AskQuestion + 机读确认行）后方可生效，未确认 fail-safe 为 `full` |
+| **需求与设计** | **R19** 隐性需求机读后方可派架构师；设计问题清单经 **R18** 机读后方可进入开发 |
+| **质量门禁** | R15 lint、R16 静态扫描（重复代码 + 密钥扫描）；批次含 E2E、**R14** 接口测试、**R17** 存储对账；无对外接口 / 无 UI / 无持久化等走**双要素豁免** |
+| **机械实现** | Hook 逻辑按域拆在 `hooks/lib/*`（`workflow-gate-lib.mjs` 为薄 barrel）；自测拆为 `scripts/tests/selftest/` 与 `scripts/tests/scenarios/` |
+| **工具差异** | Cursor 以 Hook 自动拦截为主（含 `gate-subagent-track` 落盘顶层会话）；Trae 为原生 Hook + `gate-check.mjs` 双保险（见 `trae/.trae/harness/spec/trae-adaptation.md`） |
+
+编号导航与公式细节以各适配 `harness/spec/` 为准，本页不重复以免漂移。
 
 ## 未来扩展
 
@@ -40,18 +57,11 @@
 1. 在仓库根**新增一个与 `cursor/` / `trae/` 平级的目录**（目录名取该工具名，如 `<tool>/`）。
 2. 在该目录下实现一套**以自身为根、完整自洽**的适配。建议沿用薄宪章分层（不必与 Cursor/Trae 文件名一一对应，但应分清）：
    - **常驻宪章**：根目录 `AGENTS.md`（或该工具等价入口）——编排硬约束，不堆公式长文；
-   - **机械执行**：该工具的 Hook/门禁脚本（客观判据唯一执行权威，R12 只可加强）；
+   - **机械执行**：该工具的 Hook/门禁脚本（客观判据唯一执行权威，R12 只可加强）；建议按域拆分 `hooks/lib/*`，并配套 `scripts/tests/{selftest,scenarios}/`；
    - **说明权威**：如 `harness/spec/`——公式、豁免表、模式细则，供人审与改门禁；
    - **角色执行面**：子 agent / Subagent 定义；
-   - 以及模板、`.gitignore`、自测脚本等运行时依赖。
+   - 以及模板、`.gitignore`、自测入口脚本等运行时依赖。
 3. 具体拆分哪些角色、用何种门禁机制，由该工具能力决定。
 4. 该适配同样以「作为工作区根打开」或「整体复制到宿主项目根」两种方式使用；其 `.gitignore` 随适配目录一并复制。
 
 > 各适配自成一体、互不引用（含各自的 `.gitignore`），因此新增或调整某个适配不会影响其它适配。
-
-## 使用方法
-
-各适配的快速开始、目录结构、**规约权威分层**、配置与门禁说明见其自带 README：
-
-- [`cursor/README.md`](cursor/README.md)
-- [`trae/README.md`](trae/README.md)

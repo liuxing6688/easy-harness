@@ -62,11 +62,22 @@ async function main() {
     return;
   }
 
-  const { readStdinJsonAsync, checkRoleDispatchGate } = lib;
+  const { readStdinJsonAsync, checkRoleDispatchGate, recordDispatchedRole, normalizeRoleSlug } =
+    lib;
 
   try {
     const input = await readStdinJsonAsync();
     const role = extractTargetRole(input);
+
+    // R5：凡能解析到角色名即落盘（含 project-manager / requirements-analyst），
+    // 供写入期角色↔路径匹配；不依赖 Cursor 子代理 conversation_id 回链。
+    if (role) {
+      try {
+        recordDispatchedRole(normalizeRoleSlug(role) ?? role);
+      } catch {
+        /* 记录失败不阻断 Task（fail-open） */
+      }
+    }
 
     if (!role || !GATED_ROLES.has(role)) {
       failOpenAllow('not-gated-role');

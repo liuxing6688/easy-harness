@@ -1,18 +1,17 @@
 #!/usr/bin/env node
 /**
  * beforeShellExecution 门禁：无分派计划时，禁止项目初始化 / Tauri 构建命令。
- * 自锁防护（.trae/harness/spec/mechanical-gates.md §8.4）：见 gate-dev-workflow.mjs 顶部注释，策略一致。
+ * 自锁防护（`.trae/harness/spec/mechanical-gates.md` §8.4）：见 gate-dev-workflow.mjs 顶部注释，策略一致。
  */
-function failOpenAllow(context, err) {
+function failOpenAllow(context, err, lib) {
   process.stderr.write(`[gate-dev-shell] fail-open (${context}): ${err?.message ?? err}\n`);
-  if (globalThis.__gateLib?.recordFailOpenEvent) {
-    try {
-      globalThis.__gateLib.recordFailOpenEvent('gate-dev-shell', context, err);
-    } catch {
-      // 写日志失败不影响 fail-open 放行
-    }
+  try {
+    lib?.recordFailOpenEvent?.('gate-dev-shell', context, err);
+  } catch {
+    /* 落盘失败不影响 fail-open 放行 */
   }
-  process.stdout.write(JSON.stringify({ permission: 'allow' }));
+  // Trae PreToolUse stdout 契约
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } }));
   process.exit(0);
 }
 
@@ -25,22 +24,33 @@ async function main() {
     return;
   }
 
-  const { allow, assertDevGateOrDeny, isGatedShellCommand, readStdinJsonAsync } = lib;
-  globalThis.__gateLib = lib;
+  const { allow, assertDevGateOrDeny, deny, isGatedShellCommand, isRootConversationCaller, readStdinJsonAsync } =
+    lib;
 
   try {
     const input = await readStdinJsonAsync();
-    const command = input.command ?? input.tool_input?.command ?? '';
+    // Trae PreToolUse stdin：命令在 tool_input.command 中
+    const command = input.tool_input?.command ?? input.command ?? '';
 
     if (!isGatedShellCommand(command)) {
       allow();
     }
 
+    // R5 机械化补强：同 gate-dev-workflow.mjs。
+    // Trae stdin 字段为 session_id（非 conversation_id）。
+    if (isRootConversationCaller(input?.session_id)) {
+      deny(
+        '流程门禁（R5，机械化补强）：检测到本次 Shell 命令由顶层代理直接发起（session_id 与顶层会话一致），而非通过 Task 派发的子代理。受门禁 Shell 操作必须由对应子 agent（如 development-engineer / test-engineer）在 Task 内执行。',
+        'AGENTS.md §5.1（R5）：顶层代理不得代行子角色职责，禁止直接执行受门禁 Shell 命令。请先经项目经理分派，再以 Task 发起对应子 agent 执行。',
+      );
+    }
+
     assertDevGateOrDeny();
     allow();
   } catch (err) {
-    failOpenAllow('runtime', err);
+    failOpenAllow('runtime', err, lib);
   }
 }
 
 main();
+

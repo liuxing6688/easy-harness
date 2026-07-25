@@ -16,7 +16,7 @@ Phase 1 对照本清单逐项打勾并记录证据。结论：`✓` 合规 / `�
 
 | A1 | `docs/` 结构已由 bootstrap 或等价方式创建 | `AGENTS.md` §8 |
 
-| A2 | `workflow_mode` 与用户声明一致（full/hotfix/docs-only/single-task） | `workflow-modes.md` |
+| A2 | `workflow_mode` 与用户 R20 确认一致（full/hotfix/docs-only/single-task；轻量须有「工作流模式确认」行） | `workflow-modes.md` R20 |
 
 | A3 | `iterationType` 与分诊表一致且已留痕 | `workflow-modes.md` |
 
@@ -26,7 +26,7 @@ Phase 1 对照本清单逐项打勾并记录证据。结论：`✓` 合规 / `�
 
 | A6 | 须确认事项均在 `## 用户确认记录` 留痕 | `gate-chain.md` |
 
-| A7 | hotfix 且 `hotfix_p0_impact: none` 时，「## 用户确认记录」含「hotfix影响面」判断依据行 | `gate-chain.md` R9 |
+| A7 | hotfix 且 `hotfix_p0_impact: none` 时，「## 用户确认记录」含「hotfix影响面」、受影响用户、既有行为、回滚条件与 P0 判断依据的最小影响澄清行 | `gate-chain.md` R9 |
 
 
 

@@ -34,7 +34,8 @@ model: composer-2.5
 
 ## 存储对账（R17，机读硬门禁，说明权威见 `.cursor/harness/spec/mechanical-gates.md` §8.3（执行权威：Hook/脚本））
 
-- **机读判据**：`batchStorageReconPresent`（`checkBatchStorageReconciliationReport`）；并入 `batchTestComplete`。缺章节、缺适用分类型行、仅有「不适用」行、描述列空、「其他」/「不适用」无备注、介质不合法或批次任务包未覆盖时 stop 注入 R17 followup。
+- **机读判据**：`batchStorageReconPresent`（`checkBatchStorageReconciliationReport`）；并入 `batchTestComplete`。缺章节、缺适用分类型行、仅有「不适用」行、描述列空、「其他」/「不适用」无备注、介质不合法、批次任务包未覆盖，或**适用行缺少/无效对账证据文件**时 stop 注入 R17 followup。
+- **对账证据文件（硬门禁）**：每个适用（非「不适用」）对账行的「对账方式」须引用 `test-results/recon/<name>.json`；你须在实际查验后写入该 JSON（字段：`command` 非空、`exitCode` 数值、`summary` 非空，建议含 `capturedAt`）。「不适用」行不要求证据。Hook 校验路径存在与字段完备，不校验查验语义是否正确。
 - **报告章节**：非空「## 存储对账记录」（模板：`.cursor/templates/test-report.md`）；场景类型 / 描述列 / 存储介质 / 任务包覆盖要求见 `.cursor/harness/spec/mechanical-gates.md` §8.3。
 - **介质范围**：数据库、文件、缓存、对象存储、其他、不适用（`.cursor/harness/spec/mechanical-gates.md` §8.3 关键词表）；「其他」须备注具体系统；「不适用」仅用于无写入任务包留痕，且不计入分类型真实对账；不得因「不是数据库」跳过。
 - **按批次覆盖**：进度列表中已完成批次测试的任务包编号须全部出现在对账「关联任务包」列；后续批次须为新增任务包补对账行。
@@ -118,4 +119,4 @@ node .cursor/scripts/e2e-run.mjs --scope=final --baseline=<requirement-list.md �
 4. **`gatePassed≠true` 时禁止宣告该环节（批次/最终）测试通过**，须在报告中列明 `missingIds`/`unexplainedSkips`/失败用例并阻塞推进；
 5. hotfix 模式下（R11）**仍须**实际运行一次 `e2e-run.mjs --scope=final` 并获得 `gatePassed=true`，**不得**以「热修范围小」为由跳过 E2E 或凭经验判断通过；
 6. **开发窗口批次集成测试阶段（R14）必须做接口测试**，测试报告须含非空「## 接口测试报告」章节（至少一条真实用例数据行）；缺失或为空时批次集成测试视为未完成，stop 门禁将拒绝收尾/推进；**无对外接口项目**须走「接口测试适用性豁免」（架构师声明 + 用户确认）方可豁免，不得自行跳过；
-7. **开发窗口批次集成测试阶段（R17）必须满足存储对账机读判据** `batchStorageReconPresent`（见 `.cursor/harness/spec/mechanical-gates.md` §8.3）；**无业务数据持久化项目**须走存储对账双要素豁免方可跳过，不得自行跳过。
+7. **开发窗口批次集成测试阶段（R17）必须满足存储对账机读判据** `batchStorageReconPresent`（见 `.cursor/harness/spec/mechanical-gates.md` §8.3），含适用行的 `test-results/recon/*.json` 证据文件；**无业务数据持久化项目**须走存储对账双要素豁免方可跳过，不得自行跳过。

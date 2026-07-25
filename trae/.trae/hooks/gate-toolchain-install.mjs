@@ -1,18 +1,17 @@
 #!/usr/bin/env node
 /**
  * beforeShellExecution 门禁：系统级工具链安装须先询问用户确认路径。
- * 自锁防护（.trae/harness/spec/mechanical-gates.md §8.4）：见 gate-dev-workflow.mjs 顶部注释，策略一致。
+ * 自锁防护（`.trae/harness/spec/mechanical-gates.md` §8.4）：见 gate-dev-workflow.mjs 顶部注释，策略一致。
  */
-function failOpenAllow(context, err) {
+function failOpenAllow(context, err, lib) {
   process.stderr.write(`[gate-toolchain-install] fail-open (${context}): ${err?.message ?? err}\n`);
-  if (globalThis.__gateLib?.recordFailOpenEvent) {
-    try {
-      globalThis.__gateLib.recordFailOpenEvent('gate-toolchain-install', context, err);
-    } catch {
-      // 写日志失败不影响 fail-open 放行
-    }
+  try {
+    lib?.recordFailOpenEvent?.('gate-toolchain-install', context, err);
+  } catch {
+    /* 落盘失败不影响 fail-open 放行 */
   }
-  process.stdout.write(JSON.stringify({ permission: 'allow' }));
+  // Trae PreToolUse stdout 契约
+  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow' } }));
   process.exit(0);
 }
 
@@ -26,11 +25,11 @@ async function main() {
   }
 
   const { allow, ask, isToolchainInstallCommand, hasToolchainInstallApproval, readStdinJsonAsync } = lib;
-  globalThis.__gateLib = lib;
 
   try {
     const input = await readStdinJsonAsync();
-    const command = input.command ?? input.tool_input?.command ?? '';
+    // Trae PreToolUse stdin：命令在 tool_input.command 中
+    const command = input.tool_input?.command ?? input.command ?? '';
 
     if (!isToolchainInstallCommand(command)) {
       allow();
@@ -45,8 +44,9 @@ async function main() {
       'AGENTS.md gate-toolchain-install：请先使用 AskQuestion 询问用户工具链的现有路径或安装目录。用户确认后创建 `.trae/hooks/.toolchain-install-approved.json`（含 approvedAt、userConfirmed: true，可选 commandHash），默认 60 分钟内有效，再重试安装命令。',
     );
   } catch (err) {
-    failOpenAllow('runtime', err);
+    failOpenAllow('runtime', err, lib);
   }
 }
 
 main();
+

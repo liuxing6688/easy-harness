@@ -13,10 +13,9 @@
  *   node .trae/scripts/gate-check.mjs role <role-name>                # 角色分派前门禁（R13）
  *   node .trae/scripts/gate-check.mjs stop                             # 回合结束前门禁
  *
- * 输出（stdout）：原样透传 gate 脚本的 JSON 结果：
- *   {permission: "allow"}                                → 放行
- *   {permission: "deny", user_message, agent_message}    → 拒绝（须停止并报告用户）
- *   {followup_message: "..."}                            → stop 专用，须继续推进
+ * 输出（stdout）：原样透传 gate 脚本的 JSON 结果（Trae Hook 契约）：
+ *   PreToolUse: {hookSpecificOutput:{hookEventName:"PreToolUse",permissionDecision:"allow"|"deny"|"ask",...}}
+ *   Stop: {} 或 {decision:"block", reason:"..."}
  * 退出码：0 = 放行 / 可收尾；1 = 拒绝；2 = 须继续推进（followup）
  *
  * 注意：gate 脚本 fail-open（见 .trae/harness/spec/mechanical-gates.md §8.4），lib 不可加载或运行期异常时放行。
@@ -77,14 +76,14 @@ async function main() {
       const command = rest.join(' ');
       if (!command) { process.stderr.write('Error: command required\n'); process.exit(1); }
       scriptName = 'gate-dev-shell.mjs';
-      payload = { command };
+      payload = { tool_input: { command } };
       break;
     }
     case 'toolchain': {
       const command = rest.join(' ');
       if (!command) { process.stderr.write('Error: command required\n'); process.exit(1); }
       scriptName = 'gate-toolchain-install.mjs';
-      payload = { command };
+      payload = { tool_input: { command } };
       break;
     }
     case 'role': {
@@ -110,8 +109,12 @@ async function main() {
 
   let result = {};
   try { result = JSON.parse(stdout); } catch { /* non-JSON, treat as allow */ }
-  if (result.permission === 'deny') process.exit(1);
-  if (result.followup_message) process.exit(2);
+  // Trae PreToolUse 格式：检查 hookSpecificOutput.permissionDecision
+  const permDecision = result?.hookSpecificOutput?.permissionDecision;
+  // Trae Stop 格式：检查 decision === 'block'
+  const isBlocked = result?.decision === 'block';
+  if (permDecision === 'deny') process.exit(1);
+  if (isBlocked) process.exit(2);
   process.exit(0);
 }
 
