@@ -1,5 +1,8 @@
 /**
- * 场景套件：greenfieldScenarios
+ * 场景套件：greenfieldScenarios（G1–G11e）
+ * 覆盖 greenfield/full 主路径：分派计划、R3 成果物、角色派发链、写入期门禁、stop 催促闭环。
+ *
+ * 入口：node .cursor/scripts/gate-scenarios.mjs；脚手架：./_harness.mjs
  */
 import {
   CONFIRM_SECTION,
@@ -63,6 +66,48 @@ export function greenfieldScenarios() {
 
   check('G2 需求就绪 + 用户确认后发起 system-architect', 'allow', {
     hook: 'role', role: 'system-architect', processPath: readyProc, gatedPath: readyGated,
+  });
+
+  // R25：非 stub 设计文档须含「同构模块识别」章节方可发起设计审核
+  const ISO_DESIGN_BASE = ['# detail-design-spec.md', '', '## 2. 系统架构', '', '分层架构：API 层、服务层、数据层。', ''];
+  const isoMissing = writeFixture('gf-iso-missing', {
+    'docs/process/process.md': greenfieldReady(),
+    'docs/requirement/requirement-spec.md': REQ_SPEC,
+    'docs/requirement/requirement-list.md': REQ_LIST,
+    'docs/design/detail-design-spec.md': ISO_DESIGN_BASE.join('\n'),
+    'docs/design/develop-task-list.md': TASK_LIST,
+    'docs/design/design-problem-list.md': DPL_CLEAN,
+    'docs/design/gated-artifacts.json': GATED_EMPTY,
+  });
+  check('G2b R25：非 stub 设计缺「同构模块识别」章节时发起 requirement-reviewer', 'deny', {
+    hook: 'role',
+    role: 'requirement-reviewer',
+    processPath: relToProject(path.join(isoMissing, 'docs/process/process.md')),
+    gatedPath: relToProject(path.join(isoMissing, 'docs/design/gated-artifacts.json')),
+  });
+
+  const isoReady = writeFixture('gf-iso-ready', {
+    'docs/process/process.md': greenfieldReady(),
+    'docs/requirement/requirement-spec.md': REQ_SPEC,
+    'docs/requirement/requirement-list.md': REQ_LIST,
+    'docs/design/detail-design-spec.md': [
+      ...ISO_DESIGN_BASE,
+      '## 同构模块识别（须逐项列出）',
+      '',
+      '| 同构组名称 | 涉及范围 | 共享 Primitive 名称 | 落点路径 |',
+      '| --- | --- | --- | --- |',
+      '| CRUD 路由族 | projects/workspaces | routeSchemas | shared/route-schemas.ts |',
+      '',
+    ].join('\n'),
+    'docs/design/develop-task-list.md': TASK_LIST,
+    'docs/design/design-problem-list.md': DPL_CLEAN,
+    'docs/design/gated-artifacts.json': GATED_EMPTY,
+  });
+  check('G2c R25：补齐同构模块识别后发起 requirement-reviewer', 'allow', {
+    hook: 'role',
+    role: 'requirement-reviewer',
+    processPath: relToProject(path.join(isoReady, 'docs/process/process.md')),
+    gatedPath: relToProject(path.join(isoReady, 'docs/design/gated-artifacts.json')),
   });
 
   const badDesign = writeFixture('gf-baddesign', {

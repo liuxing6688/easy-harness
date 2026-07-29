@@ -24,14 +24,14 @@
 
 **生效双要素（缺一则轻量路径不生效）**：
 
-1. **AskUserQuestion 确认**（编排义务，PM）：接收目标后，按下方分诊表提出建议模式，用 **「AskUserQuestion 固定选项文案」** 请用户确认（选项须含模式名 + 流程摘要，不得只给短标签）。用户口头已明确等价意图时，仍须用 AskUserQuestion（或等价显式确认）固化选项，不得跳过。
+1. **「需要用户确认」编排确认**（编排义务，PM，Trae 适配）：接收目标后，按下方分诊表提出建议模式，在返回结果中标注「需要用户确认：[建议模式+固定选项文案]」由顶层 Agent 用 `AskUserQuestion` 代为请用户确认（PM 为 Subagent，不含 `AskUserQuestion` 工具；选项须含模式名 + 流程摘要，不得只给短标签）。用户口头已明确等价意图时，仍须以「需要用户确认」走顶层 Agent 代询（或等价显式确认）固化选项，不得跳过。
 2. **机读确认行**（Hook，`hasLiteModeConfirmation` / `checkLiteModeConfirmed`）：`## 用户确认记录` 须有一行，确认项含「工作流模式确认」（或 `workflow_mode 确认`），摘要含与声明模式匹配的意图词：
    - `hotfix`：`hotfix` / 热修复 / 热修 / 修 bug
    - `docs-only`：`docs-only` / 只改文档 / 仅改文档 / 仅文档
    - `single-task`：`single-task` / 单任务 / 小改动  
-   格式建议：`| 工作流模式确认 | YYYY-MM-DD | 确认采用 workflow_mode: hotfix；AskUserQuestion「修缺陷」 |`
+   格式建议：`| 工作流模式确认 | YYYY-MM-DD | 确认采用 workflow_mode: hotfix；AskUserQuestion 代询「修缺陷」 |`
 
-#### AskUserQuestion 固定选项文案（唯一权威，PM 须原样或语义等价使用）
+#### 「需要用户确认」固定选项文案（唯一权威，PM 须原样或语义等价使用，由顶层 Agent 用 `AskUserQuestion` 代为呈现）
 
 提问前可一句说明建议项（如「建议：修缺陷」）。选项文案如下（标题 + 流程摘要不可省略）：
 
@@ -49,9 +49,9 @@
 - `getWorkflowMode()` 按 **`full`** 计算特权路径（R3 豁免、R9/R11、docs-only 禁写、门禁链简化等均不生效）；
 - `gate-role-sequence` 对除 `project-manager` / `requirements-analyst` 外的角色 **拒绝** Task，并提示补确认或改回 `full`。
 
-**意图信号（仅用于分诊提议，不可单独落盘）**：用户说「修 bug」「紧急修复」「文档校对」「改个 typo」等，PM 可作为 AskUserQuestion 默认选中项的依据；**禁止**无确认自动写入轻量 `workflow_mode`。口令式关键词（「热修复」「只改文档」「单任务」）降级为信号之一，不再是唯一入口。
+**意图信号（仅用于分诊提议，不可单独落盘）**：用户说「修 bug」「紧急修复」「文档校对」「改个 typo」等，PM 可作为「需要用户确认」默认选中项的依据（由顶层 Agent 用 `AskUserQuestion` 代为呈现）；**禁止**无确认自动写入轻量 `workflow_mode`。口令式关键词（「热修复」「只改文档」「单任务」）降级为信号之一，不再是唯一入口。
 
-**范围扩大**：已确认轻量后若目标扩展到新交互面 / schema / 治理改动，须再经 AskUserQuestion 升级为 `full` 并留痕；禁止静默升权简化。
+**范围扩大**：已确认轻量后若目标扩展到新交互面 / schema / 治理改动，须再以「需要用户确认：[升级为 full]」由顶层 Agent 用 `AskUserQuestion` 代为询问升级为 `full` 并留痕；禁止静默升权简化。
 
 ### 迭代分诊判定表（PM 判定，须 process.md 留痕）
 
@@ -101,7 +101,7 @@
 
 用户可随时明确表达终止某一流程（关键词如「取消」「终止流程」「不要继续了」「放弃这个迭代」，**不含**「取消当前这一步」之类的局部撤回）。触发后：
 
-1. **项目经理必须先用 `AskQuestion` 做不可逆二次确认**，明确告知用户后果：该 `process.md` 将被永久冻结、无法恢复，若之后要继续相关工作须发起新的流程/迭代（新的 `process.md`）。
+1. **项目经理必须先在返回结果中标注「需要用户确认：[取消流程]」由顶层 Agent 用 `AskUserQuestion` 代为做不可逆二次确认**（Trae 适配：PM 为 Subagent，不含 `AskUserQuestion` 工具），明确告知用户后果：该 `process.md` 将被永久冻结、无法恢复，若之后要继续相关工作须发起新的流程/迭代（新的 `process.md`）。
 2. 用户确认后，项目经理在该 `process.md` frontmatter 写入 `cancelled: true`（含 `cancelledAt`、`cancelReason`），并在 `## 取消记录` 追加一行（时间、触发原话摘要、二次确认摘要）。
 3. 写入后，该 `process.md` 即被 Hook **永久冻结**（机械门禁，见 `mechanical-gates.md` §8.1）：任何角色（含项目经理本人）均不得再修改/删除该文件；针对该流程的任何开发/初始化操作一律被拒绝；`gate-stop-workflow` 检测到 `cancelled: true` 时直接放行、不再催促推进。
 4. 项目经理与顶层代理**不得**、也**无法**（有 Hook 兜底）恢复已取消的流程；用户若要求恢复，须引导其发起新的 feature/迭代，不得声称「已恢复」。

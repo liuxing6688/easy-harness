@@ -1,14 +1,20 @@
 #!/usr/bin/env node
 /**
- * 批次/最终 E2E 门禁运行器（Chromium-only）。判据与命令的唯一权威定义见 .trae/harness/spec/mechanical-gates.md §8.3。
+ * 批次/最终 E2E 门禁运行器（Chromium-only）。
+ *
+ * 职责：跑 Playwright chromium → 解析 JSON 报告 → 按覆盖率/通过率算 gatePassed → 落盘。
+ * 判据说明权威：`.trae/harness/spec/mechanical-gates.md` §8.3。
+ * 纯函数判据见 `./e2e-run-lib.mjs`；Hook 侧读取见 `readE2eResult(scope)`。
  *
  * 用法：
  *   node .trae/scripts/e2e-run.mjs --scope=batch --required-ids=R-001,R-002
  *   node .trae/scripts/e2e-run.mjs --scope=final --baseline=docs/requirement/requirement-list.md
- *   node .trae/scripts/e2e-run.mjs --scope=final --baseline=docs/{feature}/requirement/requirement-list.md
  *
- * 产物：test-results/e2e/.e2e-batch-result.json 或 .e2e-final-result.json（gatePassed 字段）。
- * 浏览器范围：仅 Chromium（playwright.config.ts 仅声明 chromium project）；本脚本只解析该 project 结果。
+ * 产物：
+ *   batch → test-results/e2e/.e2e-batch-result.json
+ *   final → test-results/e2e/.e2e-final-result.json
+ * 浏览器范围：仅 Chromium（唯一允许简化的维度；gatePassed/覆盖率不因收窄而放松）。
+ * hotfix（R11）：唯一测试通道直接以 `--scope=final` 语义运行。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -26,6 +32,7 @@ const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const PW_JSON_REPORT = path.join(PROJECT_ROOT, 'test-results/e2e/pw-report.json');
 const RESULT_DIR = path.join(PROJECT_ROOT, 'test-results/e2e');
 
+/** 解析 `--key=value` 形式的 CLI 参数。 */
 function parseArgs(argv) {
   const result = {};
   for (const arg of argv) {
@@ -35,6 +42,7 @@ function parseArgs(argv) {
   return result;
 }
 
+/** 查找 coverage-waivers.json（优先 e2e/ 根，其次 e2e/specs/）。 */
 function findCoverageWaiversPath() {
   const candidates = [
     path.join(PROJECT_ROOT, 'e2e/coverage-waivers.json'),
@@ -43,6 +51,7 @@ function findCoverageWaiversPath() {
   return candidates.find((p) => fs.existsSync(p)) ?? null;
 }
 
+/** @returns {Set<string>} 已登记且含 reason 的豁免需求编号 */
 function loadWaivedIds() {
   const p = findCoverageWaiversPath();
   if (!p) return new Set();
@@ -53,6 +62,11 @@ function loadWaivedIds() {
   }
 }
 
+/**
+ * 解析本次要求覆盖的需求编号：
+ *   - batch：`--required-ids=R-001,R-002`
+ *   - final：`--baseline=<requirement-list.md>` 提取全部 P0
+ */
 function loadRequiredIds(args) {
   if (args['required-ids']) {
     return args['required-ids']
@@ -71,6 +85,7 @@ function loadRequiredIds(args) {
   return [];
 }
 
+/** 执行 Playwright chromium project；stdio inherit 便于本地排查。 */
 function runPlaywright() {
   fs.mkdirSync(RESULT_DIR, { recursive: true });
   try {
@@ -85,6 +100,7 @@ function runPlaywright() {
   }
 }
 
+/** 读取 Playwright JSON reporter 产物；缺失或解析失败返回 null。 */
 function loadPlaywrightReport() {
   if (!fs.existsSync(PW_JSON_REPORT)) return null;
   try {
@@ -92,6 +108,13 @@ function loadPlaywrightReport() {
   } catch {
     return null;
   }
+}
+
+/** 按 scope 落盘 `.e2e-batch-result.json` 或 `.e2e-final-result.json`。 */
+function writeResult(scope, result) {
+  fs.mkdirSync(RESULT_DIR, { recursive: true });
+  const file = scope === 'final' ? '.e2e-final-result.json' : '.e2e-batch-result.json';
+  fs.writeFileSync(path.join(RESULT_DIR, file), `${JSON.stringify(result, null, 2)}\n`, 'utf8');
 }
 
 function main() {
@@ -104,6 +127,7 @@ function main() {
   const { exitCode } = runPlaywright();
   const report = loadPlaywrightReport();
 
+  // 无 JSON 报告则无法机读覆盖率——直接 fail（不得静默放过）。
   if (!report) {
     const failResult = {
       scope,
@@ -138,12 +162,6 @@ function main() {
   writeResult(scope, finalResult);
   console.log(JSON.stringify(finalResult, null, 2));
   process.exit(finalResult.gatePassed ? 0 : 1);
-}
-
-function writeResult(scope, result) {
-  fs.mkdirSync(RESULT_DIR, { recursive: true });
-  const file = scope === 'final' ? '.e2e-final-result.json' : '.e2e-batch-result.json';
-  fs.writeFileSync(path.join(RESULT_DIR, file), `${JSON.stringify(result, null, 2)}\n`, 'utf8');
 }
 
 main();

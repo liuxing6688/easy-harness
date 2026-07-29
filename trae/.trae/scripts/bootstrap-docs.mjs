@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 /**
- * 幂等初始化 docs/ 目录骨架 + process.md，并同步 .trae/harness-state.json。
+ * 幂等初始化 docs/ 目录骨架 + process.md，并同步 `.trae/harness-state.json`。
+ *
+ * 职责：为门禁提供「活跃 process.md 指针」。Hook 通过 harness-state.json
+ * （或环境变量 `HARNESS_PROCESS_PATH`）决定读哪一份流程文件。
  *
  * 用法：
- *   node .trae/scripts/bootstrap-docs.mjs                  # Greenfield
- *   node .trae/scripts/bootstrap-docs.mjs --feature=<name> # Feature 迭代
+ *   node .trae/scripts/bootstrap-docs.mjs                  # Greenfield → docs/
+ *   node .trae/scripts/bootstrap-docs.mjs --feature=<name> # Feature → docs/<name>/
  *
  * 幂等性：已存在的 process.md 不会被覆盖；已存在的子目录不会报错。
+ * 注意：harness-state.json 属 R29 门禁自治资产——本脚本面向用户/PM 初始化场景；
+ * 代理不得通过写文件工具自改该指针以绕过门禁。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,10 +20,12 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 
+/** 标准 docs 子目录（与角色成果物路径约定对齐）。 */
 const DOC_SUBDIRS = ['requirement', 'design', 'quality', 'test', 'process'];
 const PROCESS_TEMPLATE = path.join(PROJECT_ROOT, '.trae/templates/process.md');
 const HARNESS_STATE = path.join(PROJECT_ROOT, '.trae/harness-state.json');
 
+/** 解析 `--key=value` CLI 参数。 */
 function parseArgs(argv) {
   const result = {};
   for (const arg of argv) {
@@ -32,6 +39,10 @@ function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
 }
 
+/**
+ * 若不存在 process.md，则从模板复制；已存在则保留。
+ * @returns {{ path: string, created: boolean }}
+ */
 function ensureProcessMd(processDir) {
   const processPath = path.join(processDir, 'process.md');
   if (fs.existsSync(processPath)) {
@@ -45,10 +56,16 @@ function ensureProcessMd(processDir) {
   return { path: processPath, created: true };
 }
 
+/** 绝对路径 → 仓库相对正斜杠路径（写入 harness-state 用）。 */
 function toWorkspaceRelative(absPath) {
   return path.relative(PROJECT_ROOT, absPath).replace(/\\/g, '/');
 }
 
+/**
+ * 更新活跃流程指针；保留文件中其它字段。
+ * @param {string} activeProcessPath 相对仓库根的 process.md 路径
+ * @param {string|null} activeFeature Feature 名；Greenfield 时清除该字段
+ */
 function writeHarnessState(activeProcessPath, activeFeature) {
   let state = {};
   if (fs.existsSync(HARNESS_STATE)) {

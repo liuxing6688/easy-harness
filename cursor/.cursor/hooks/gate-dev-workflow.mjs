@@ -1,9 +1,27 @@
 #!/usr/bin/env node
 /**
- * preToolUse 门禁：无项目经理分派计划时，禁止写入开发产物；
- * R5：拦截顶层代理代写 + 角色↔路径越权写入（含 docs 成果物）。
- * 自锁防护（`.cursor/harness/spec/mechanical-gates.md` §8.4）：workflow-gate-lib.mjs 动态加载失败或执行期出现未预期
- * 异常时 fail-open 放行并打印 stderr 告警，避免门禁自身故障导致全流程硬死锁。
+ * preToolUse 门禁（Write / StrReplace / ApplyPatch / Delete / EditNotebook）。
+ *
+ * 职责：在写文件工具真正落盘前，对受门禁路径做确定性拦截。
+ * 拦截范围（与 `hooks.json` matcher 对齐）：
+ *   - 源码 / 构建 / 根敏感路径（`isGatedDevPath`）
+ *   - docs 角色成果物（`isGatedRoleArtifactPath`）
+ *   - R6：`.cursor/scripts|agents|hooks/**` 与代码扩展名默认门禁
+ *   - R29：门禁自治资产（运行时标记 / 授权凭证 / 门禁配置与权威文本）
+ *
+ * 判定顺序（命中即 deny；说明权威见 mechanical-gates.md §8.1）：
+ *   R10 cancelled → R29 自治资产 → R5 身份基准告警 → R5 顶层 conversation_id
+ *   → R5 角色↔路径 →（仅源码路径，排除 e2e）分派计划 + R3/R9/阻塞 → allow
+ *
+ * 共享判据：`./workflow-gate-lib.mjs`（实现按域拆在 `./lib/`）。
+ * 自锁防护（§8.4）：lib 加载失败或未预期运行时异常时 fail-open 放行并 stderr 告警，
+ * 避免门禁自身故障导致全流程硬死锁；同时 best-effort 落盘 fail-open 事件。
+ */
+/**
+ * 门禁自锁逃生：写 stderr、可选落盘、stdout 输出 allow 后退出。
+ * @param {string} context 失败场景标识（如 `lib-load` / `runtime`）
+ * @param {unknown} err
+ * @param {object} [lib] 已成功加载的 workflow-gate-lib（加载失败时为空）
  */
 function failOpenAllow(context, err, lib) {
   process.stderr.write(`[gate-dev-workflow] fail-open (${context}): ${err?.message ?? err}\n`);
@@ -16,6 +34,11 @@ function failOpenAllow(context, err, lib) {
   process.exit(0);
 }
 
+/**
+ * 从 ApplyPatch 文本中提取 `*** Add|Update|Delete File:` 目标路径。
+ * @param {unknown} text
+ * @returns {string[]}
+ */
 function extractPatchPaths(text) {
   if (typeof text !== 'string') return [];
   const paths = [];
@@ -27,6 +50,12 @@ function extractPatchPaths(text) {
   return paths;
 }
 
+/**
+ * 从 tool_input / arguments 中收集本次写入涉及的全部路径。
+ * 同时覆盖直接字段（path / file_path 等）与嵌套 patch/diff 文本。
+ * @param {unknown} value
+ * @returns {string[]}
+ */
 function extractToolPaths(value) {
   const paths = [];
   if (!value) return paths;
@@ -60,12 +89,18 @@ async function main() {
     allow,
     assertDevGateOrDeny,
     checkRolePathPermission,
+    classifyHarnessSelfGovernedPath,
     deny,
+    harnessSelfGovernedVerdict,
+    inspectIdentityBaseline,
     isCancelledProcessFile,
     isGatedDevPath,
+    isE2eTestPath,
     isGatedRoleArtifactPath,
     isRootConversationCaller,
+    normalizePath,
     readStdinJsonAsync,
+    recordIdentityBaselineNotice,
   } = lib;
 
   try {
@@ -83,6 +118,19 @@ async function main() {
       }
     }
 
+    // R29：门禁自治资产优先于其余判定——运行时标记、授权凭证与门禁配置/权威文本
+    // 一律禁止由代理写入。这些路径刻意不在 isGatedDevPath 之内（否则会被当成 DE 源码
+    // 要求分派计划），故须在 gatedPaths 过滤之前单独裁决。
+    // 注意：此处不用 `ask`——Cursor 文档明确 `preToolUse` 的 ask「not enforced today」，
+    // 依赖它会使保护静默退化（见 paths.mjs 中 R29 注释与 mechanical-gates.md §8.5）。
+    for (const filePath of filePaths) {
+      const kind = classifyHarnessSelfGovernedPath(filePath);
+      if (!kind) continue;
+      const verdict = harnessSelfGovernedVerdict(kind, normalizePath(filePath));
+      deny(verdict.userMessage, verdict.agentMessage);
+    }
+
+    // 仅对受门禁路径继续；其余路径直接放行（避免无关写入触发 R5/分派计划）。
     const gatedPaths = filePaths.filter(
       (filePath) => isGatedDevPath(filePath) || isGatedRoleArtifactPath(filePath),
     );
@@ -90,7 +138,22 @@ async function main() {
       allow();
     }
 
-    // R5：顶层代理亲自写受门禁路径（源码或角色文档成果物）一律拒绝
+    // R5 加强：身份判据降级时不再静默——写 stderr 告警并在 process.md 留一次性非阻塞提醒。
+    const baseline = inspectIdentityBaseline(input?.conversation_id);
+    if (!baseline.healthy) {
+      process.stderr.write(
+        `[gate-dev-workflow] R5 identity degraded (${baseline.reason}): 顶层代写拦截本次不生效，仅靠文字约束兜底\n`,
+      );
+      if (baseline.shouldNotify) {
+        try {
+          recordIdentityBaselineNotice(baseline.reason);
+        } catch {
+          /* 提醒写入失败不影响本次判定 */
+        }
+      }
+    }
+
+    // R5：顶层代理亲自写受门禁路径（源码或角色文档成果物）一律拒绝。
     if (isRootConversationCaller(input?.conversation_id)) {
       deny(
         '流程门禁（R5，机械化补强）：检测到本次写入由顶层代理直接发起（conversation_id 与顶层会话一致），而非通过 Task 派发的子代理。受门禁路径必须由对应子 agent 在 Task 内执行。',
@@ -98,7 +161,7 @@ async function main() {
       );
     }
 
-    // R5：角色↔路径匹配（含 docs 成果物；源码须 DE 活跃）
+    // R5：角色↔路径匹配（含 docs 成果物；源码须 DE 活跃）。
     for (const filePath of gatedPaths) {
       const roleCheck = checkRolePathPermission(filePath);
       if (!roleCheck.ok) {
@@ -109,8 +172,8 @@ async function main() {
       }
     }
 
-    // 源码 / 构建产物等仍走分派计划 + R3/R9 门禁；纯文档成果物不要求 DE 分派计划
-    if (filePaths.some((filePath) => isGatedDevPath(filePath))) {
+    // 源码 / 构建产物等仍走分派计划 + R3/R9 门禁；e2e（期望 TE）与纯文档成果物不要求 DE 分派计划。
+    if (filePaths.some((filePath) => isGatedDevPath(filePath) && !isE2eTestPath(filePath))) {
       assertDevGateOrDeny();
     }
 

@@ -1,5 +1,8 @@
 /**
- * 门禁域：design — R18 设计审核/覆盖矩阵、热修 P0、fail-open 留痕
+ * 门禁域：design — R18 设计审核/覆盖矩阵、R25 同构模块识别、热修 P0、fail-open 留痕、R31 回退计数。
+ *
+ * 主要消费方：gate-role-sequence（设计就绪/审核干净/同构章节）、gate-stop-workflow（回退上限/软提醒）。
+ * 域对照见 ./README.md。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -15,7 +18,8 @@ import {
   parseMarkdownTables,
   sectionHasDataRow,
   isProcessBlocked,
-  hasUnresolvedIssues
+  hasUnresolvedIssues,
+  readTextFileSafe
 } from './core.mjs';
 import { checkRequirementReady } from './iteration.mjs';
 
@@ -422,7 +426,7 @@ export function checkHotfixP0InterfaceStorageMention(content) {
   for (const reportPath of reportPaths) {
     let reportContent = '';
     try {
-      reportContent = fs.readFileSync(reportPath, 'utf8');
+      reportContent = readTextFileSafe(reportPath) ?? ''; // R30
     } catch {
       continue;
     }
@@ -451,7 +455,7 @@ export function recordHotfixP0SoftReminder(content) {
   try {
     const processPath = getActiveProcessPath();
     if (!fs.existsSync(processPath)) return { ok: false, reason: 'no-process' };
-    let fileContent = fs.readFileSync(processPath, 'utf8');
+    let fileContent = readTextFileSafe(processPath) ?? ''; // R30
     const fm = parseProcessFrontmatter(fileContent);
     if (fm.cancelled === true) return { ok: false, reason: 'cancelled' };
     if (fileContent.includes(HOTFIX_P0_SOFT_REMINDER_MARKER)) {
@@ -496,7 +500,7 @@ export function recordFailOpenEvent(hookName, context, err) {
   try {
     const processPath = getActiveProcessPath();
     if (!fs.existsSync(processPath)) return { ok: false, reason: 'no-process' };
-    let content = fs.readFileSync(processPath, 'utf8');
+    let content = readTextFileSafe(processPath) ?? ''; // R30
     const fm = parseProcessFrontmatter(content);
     if (fm.cancelled === true) return { ok: false, reason: 'cancelled' };
 
@@ -732,12 +736,8 @@ export function checkRequirementCoverageMatrix(dplContent, reqListContent) {
   const docsBase = getActiveDocsBase();
   const designPath = path.join(docsBase, 'design/detail-design-spec.md');
   const taskListPath = path.join(docsBase, 'design/develop-task-list.md');
-  const designContent = fs.existsSync(designPath)
-    ? fs.readFileSync(designPath, 'utf8')
-    : '';
-  const taskListContent = fs.existsSync(taskListPath)
-    ? fs.readFileSync(taskListPath, 'utf8')
-    : '';
+  const designContent = readTextFileSafe(designPath) ?? ''; // R30
+  const taskListContent = readTextFileSafe(taskListPath) ?? ''; // R30
 
   const rowById = new Map();
   for (const row of matrix.rows) {
@@ -862,6 +862,101 @@ export function checkRequirementCoverageMatrix(dplContent, reqListContent) {
   return { ok: true, reason: p0Ids.length === 0 ? 'no-p0' : 'checked' };
 }
 
+/**
+ * R25：设计阶段「同构模块识别」章节机读（供发起 requirement-reviewer 前机械校验）。
+ * 背景：QE R16 全仓重复代码复盘（2026-07-28）发现相似资源族（CRUD 路由、页面脚手架、
+ * 测试 fixture、E2E helper）在设计阶段未被前置识别，并行开发工程师各自「复制改」
+ * 导致大量克隆对，QE 首轮必然打回。本规则要求设计阶段显式排查并声明共享 primitive。
+ * 设计文档为 stub（仅标题、无正文，selftest/scenario 惯用极简 fixture）时跳过，
+ * 与 R18 覆盖矩阵等既有 stub 豁免策略一致，不代表真实项目可跳过本章节。
+ * 校验规则：章节须存在且非空；要么显式声明「已排查，无同构资源族」并附非空排查依据，
+ * 要么提供含「同构组」「共享 Primitive」列的表格且至少一条真实数据行、每行两列均非空。
+ * **判定前须剥离引用块（`>` 开头的模板说明文字）**：出厂模板的机制说明中本身含有
+ * 「已排查，无同构资源族」示例句，若不剥离，未填写的出厂模板会被误判为通过（门禁空转）。
+ * 只有架构师撰写的正文（非引用行）才计入判定。
+ */
+export function checkIsomorphicModuleSection(designContent) {
+  const body = String(designContent ?? '').replace(/^#.+$/m, '').trim();
+  if (!body) {
+    return { ok: true, reason: 'stub-design' };
+  }
+  const section = extractSection(designContent, '同构模块识别');
+  if (section == null) {
+    return {
+      ok: false,
+      reason: 'missing-isomorphic-module-section',
+      message:
+        'R25：detail-design-spec.md 缺少「## 同构模块识别（须逐项列出）」章节，须排查是否存在同构 CRUD 路由/页面脚手架/测试 fixture/E2E helper 并声明共享 primitive 名称与落点，或写明「已排查，无同构资源族」及理由，不得发起 requirement-reviewer。',
+    };
+  }
+  const authored = section
+    .split('\n')
+    .filter((line) => !/^\s*>/.test(line))
+    .join('\n');
+  const sectionTrimmed = authored.trim();
+  if (!sectionTrimmed) {
+    return {
+      ok: false,
+      reason: 'empty-isomorphic-module-section',
+      message: 'R25：「同构模块识别」章节为空，不得留空跳过，不得发起 requirement-reviewer。',
+    };
+  }
+  const noGroupMatch = sectionTrimmed.match(/已排查[，,]\s*无同构资源族([^\n]*)/);
+  if (noGroupMatch) {
+    const rationale = (noGroupMatch[1] ?? '').replace(/[（）()。.\s]/g, '');
+    if (rationale.length < 4) {
+      return {
+        ok: false,
+        reason: 'isomorphic-no-group-missing-rationale',
+        message:
+          'R25：声明「已排查，无同构资源族」须附最短排查依据（如涉及范围、排查方式），不得只写结论敷衍，不得发起 requirement-reviewer。',
+      };
+    }
+    return { ok: true, reason: 'no-isomorphic-groups' };
+  }
+  const tables = parseMarkdownTables(authored);
+  const table = tables.find(
+    (t) => t.headers.some((h) => /同构组/.test(h)) && t.headers.some((h) => /primitive/i.test(h)),
+  );
+  if (!table) {
+    return {
+      ok: false,
+      reason: 'missing-isomorphic-module-table',
+      message:
+        'R25：「同构模块识别」章节须为含「同构组名称」与「共享 Primitive 名称」列的表格，或声明「已排查，无同构资源族」及理由，不得发起 requirement-reviewer。',
+    };
+  }
+  const groupIdx = table.headers.findIndex((h) => /同构组/.test(h));
+  const primitiveIdx = table.headers.findIndex((h) => /primitive/i.test(h));
+  const rows = table.rows.filter((row) => row.some((cell) => cell.trim()));
+  if (rows.length === 0) {
+    return {
+      ok: false,
+      reason: 'isomorphic-module-table-empty',
+      message: 'R25：「同构模块识别」表格无真实数据行，不得发起 requirement-reviewer。',
+    };
+  }
+  for (const row of rows) {
+    if (!(row[groupIdx] ?? '').trim() || !(row[primitiveIdx] ?? '').trim()) {
+      return {
+        ok: false,
+        reason: 'isomorphic-module-row-incomplete',
+        message:
+          'R25：「同构模块识别」表格每行「同构组名称」与「共享 Primitive 名称」均须非空，不得发起 requirement-reviewer。',
+      };
+    }
+  }
+  return { ok: true, reason: 'checked' };
+}
+
+/** R25：读取活跃 detail-design-spec.md 并校验「同构模块识别」章节（供发起 requirement-reviewer 前机械校验） */
+export function checkIsomorphicModuleSectionReady() {
+  const docsBase = getActiveDocsBase();
+  const designPath = path.join(docsBase, 'design/detail-design-spec.md');
+  const designContent = readTextFileSafe(designPath) ?? ''; // R30
+  return checkIsomorphicModuleSection(designContent);
+}
+
 /** R13：设计成果物是否就绪（供发起 requirement-reviewer 设计审核 / development-engineer 前机械校验） */
 export function checkDesignReady() {
   const docsBase = getActiveDocsBase();
@@ -888,7 +983,7 @@ export function checkDesignReviewClean() {
       message: '设计问题清单缺失，设计审核未通过，不得发起开发工程师。',
     };
   }
-  const content = fs.readFileSync(designProblemPath, 'utf8');
+  const content = readTextFileSafe(designProblemPath) ?? ''; // R30
 
   const structure = checkDesignProblemListStructure(content);
   if (!structure.ok) return structure;
@@ -909,7 +1004,7 @@ export function checkDesignReviewClean() {
       message: 'R18：缺少 requirement-list.md，无法校验需求覆盖矩阵。',
     };
   }
-  const reqList = fs.readFileSync(reqListPath, 'utf8');
+  const reqList = readTextFileSafe(reqListPath) ?? ''; // R30
   const coverage = checkRequirementCoverageMatrix(content, reqList);
   if (!coverage.ok) return coverage;
 

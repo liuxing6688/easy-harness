@@ -1,5 +1,8 @@
 /**
- * 场景套件：staticScanGateScenarios
+ * 场景套件：staticScanGateScenarios（S1–S5）
+ * 覆盖 R16：重复代码/安全扫描未通过时的 stop 与派发拦截，以及分项豁免。
+ *
+ * 入口：node .cursor/scripts/gate-scenarios.mjs；脚手架：./_harness.mjs
  */
 import {
   REQ_SPEC,

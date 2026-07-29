@@ -1,4 +1,10 @@
-﻿import {
+/**
+ * R16：静态扫描机读结果、dupCheck/securityScan 豁免与 checkStaticScanClean。
+ *
+ * 入口：node .trae/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
+import {
   test, fixtureProcess, cleanup, assert, path, fs,
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,
   isCancelledProcessFile, checkRoleDispatchGate, checkBatchApiTestReport, isApiTestExempt,

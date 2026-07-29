@@ -38,6 +38,14 @@
 
 > R16：两项 `gatePassed` 须与 `test-results/qe/.static-scan-result.json` 中 `duplication.gatePassed` / `security.gatePassed` 一致；由 `node .cursor/scripts/static-scan-run.mjs` 产出。确无法运行时须在「未执行原因」分别说明对应双要素豁免已满足（重复代码与安全扫描独立豁免，不可互相代替）。
 
+### 重复代码归属明细（`duplication.gatePassed=false` 时必填，2026-07-28 QE R16 消重复盘新增）
+
+| 克隆对涉及路径 | 归属判断（本包新增/存量/疑似兄弟包） | 说明 |
+| -------------- | ------------------------------------- | ---- |
+| | | |
+
+> **口径**：仅「本包新增」克隆计入本开发线「## 回退计数」（见 `.cursor/harness/spec/rollback.md`）；「存量」克隆应回派可考证的主责 DE 或新开消重任务包；「疑似兄弟包」克隆待兄弟包澄清前，本包状态标注「阻塞于仓级 R16（非本包新增）」而非计入本包回退。**本表不改变 `gatePassed` 判定**——全仓仍须真实为 `true` 才能整体推进测试；`gatePassed=true` 时本表可填「无」。
+
 ## 单元测试执行记录
 
 | 命令 | 退出码 | 通过/失败数 | 说明 |

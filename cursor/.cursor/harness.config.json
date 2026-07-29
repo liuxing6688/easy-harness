@@ -85,6 +85,40 @@
       "kubernetes/**"
     ],
     "docsAllowedExtensions": [".md", ".mdx", ".txt"],
+    "extensionGateExemptDirs": [
+      "node_modules",
+      "dist",
+      "build",
+      "out",
+      "target",
+      "coverage",
+      "vendor",
+      ".venv",
+      "venv",
+      "env",
+      "__pycache__",
+      ".tox",
+      ".mypy_cache",
+      ".pytest_cache",
+      ".next",
+      ".nuxt",
+      ".svelte-kit",
+      ".output",
+      ".turbo",
+      ".parcel-cache",
+      "test-results",
+      "playwright-report",
+      ".git",
+      ".idea",
+      ".vs",
+      "tmp",
+      "temp",
+      "bin",
+      "obj",
+      "Pods",
+      ".gradle",
+      ".dart_tool"
+    ],
     "dotCursorExemptPatterns": [
       ".cursor/templates/**",
       ".cursor/rules/**",
@@ -160,6 +194,12 @@
       "vs_buildtools",
       "Microsoft\\.VisualStudio\\."
     ]
+  },
+  "identity": {
+    "baselineTtlHours": 12
+  },
+  "rollback": {
+    "limit": 3
   },
   "qe": {
     "commands": {}

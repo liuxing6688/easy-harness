@@ -1,5 +1,8 @@
 /**
- * 门禁域：iteration — R3/R9 迭代成果物、需求就绪（含 R19）、E2E/lint/scan 机读结果读取
+ * 门禁域：iteration — R3/R9 迭代成果物、需求就绪（含 R19）、E2E/lint/scan 机读结果读取。
+ *
+ * 主要消费方：paths.assertDevGateOrDeny（R3/R9）、dispatch / stop（机读 gatePassed）、
+ * design.checkRequirementReady。域对照见 ./README.md。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,40 +13,27 @@ import {
   extractSection,
   parseMarkdownTables,
   sectionHasDataRow,
-  readProcessMd
+  readProcessMd,
+  readTextFileSafe,
+  readJsonFileSafe
 } from './core.mjs';
 
 export function readE2eResult(scope) {
   const file = scope === 'final' ? '.e2e-final-result.json' : '.e2e-batch-result.json';
   const resultPath = path.join(PROJECT_ROOT, 'test-results/e2e', file);
-  if (!fs.existsSync(resultPath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(resultPath, 'utf8'));
-  } catch {
-    return null;
-  }
+  return readJsonFileSafe(resultPath); // R30
 }
 
 /** R15：读取 QE 阶段编程规范（lint）门禁机读结果（lint-run.mjs 产出），缺失/解析失败返回 null */
 export function readLintResult() {
   const resultPath = path.join(PROJECT_ROOT, 'test-results/qe', '.lint-result.json');
-  if (!fs.existsSync(resultPath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(resultPath, 'utf8'));
-  } catch {
-    return null;
-  }
+  return readJsonFileSafe(resultPath); // R30
 }
 
 /** R16：读取 QE 阶段静态代码质量门禁机读结果（static-scan-run.mjs 产出），缺失/解析失败返回 null */
 export function readStaticScanResult() {
   const resultPath = path.join(PROJECT_ROOT, 'test-results/qe', '.static-scan-result.json');
-  if (!fs.existsSync(resultPath)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(resultPath, 'utf8'));
-  } catch {
-    return null;
-  }
+  return readJsonFileSafe(resultPath); // R30
 }
 
 /**
@@ -146,7 +136,7 @@ export function checkRequirementReady() {
     return { ok: false, reason: 'missing-requirement-artifacts' };
   }
   // R19：需求说明书「隐性需求确认记录」须有完整、可追溯的结构化数据行。
-  const specContent = fs.readFileSync(specPath, 'utf8');
+  const specContent = readTextFileSafe(specPath) ?? ''; // R30
   const implicitRecord = checkImplicitRequirementRecord(specContent);
   if (!implicitRecord.ok) return implicitRecord;
   const content = readProcessMd() ?? '';

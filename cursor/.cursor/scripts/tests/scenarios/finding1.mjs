@@ -1,5 +1,8 @@
 /**
  * 场景套件：finding1Scenario
+ * Finding #1 回归：出厂模板不得因空进度/占位行被误判为阻塞或错误催促。
+ *
+ * 入口：node .cursor/scripts/gate-scenarios.mjs；脚手架：./_harness.mjs
  */
 import {
   PROJECT_ROOT,

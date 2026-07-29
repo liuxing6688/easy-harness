@@ -1,12 +1,11 @@
 /**
- * e2e-run.mjs 的纯函数库：用例标题 [R-xxx] 标签解析、需求清单 P0 提取、
- * 覆盖率与 gatePassed 判据计算。与 workflow-gate-lib.mjs 独立（不引入运行时状态依赖），
- * 便于 vitest 单测覆盖（见 e2e-run-lib.test.ts）。
+ * e2e-run.mjs 的纯函数库：[R-xxx] 标签解析、P0 提取、覆盖率与 gatePassed 计算。
  *
- * 浏览器范围（.trae/harness/spec/mechanical-gates.md §8.3 唯一权威定义）：仅需支持 Chrome 内核浏览器（Chromium），
- * 本文件与调用方 e2e-run.mjs 均只解析 `chromium` project 的结果，不引入
- * Firefox/WebKit 相关代码路径——浏览器范围是本机械门禁**唯一**允许简化的维度，
- * `gatePassed`、覆盖率、追溯标签等判据不因浏览器范围收窄而放松。
+ * 与 workflow-gate-lib.mjs 独立；vitest 单测见 `e2e-run-lib.test.ts`。
+ * 运行器：`./e2e-run.mjs`；Hook 消费：`readE2eResult(scope)` → stop / R13。
+ *
+ * 浏览器范围（mechanical-gates.md §8.3）：仅 Chromium——这是机械门禁**唯一**允许
+ * 简化的维度；gatePassed / 覆盖率 / 追溯标签不因收窄而放松。
  */
 
 const R_TAG_RE = /\[(R-[A-Za-z0-9_-]+)\]/;

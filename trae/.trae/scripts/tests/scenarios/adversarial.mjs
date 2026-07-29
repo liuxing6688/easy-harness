@@ -1,5 +1,8 @@
-﻿/**
- * 场景套件：adversarialScenarios
+/**
+ * 场景套件：adversarialScenarios（A1–A10）
+ * 对抗健壮性：缺成果物、越权写入、绕过分派、非法状态机转移等应被 deny。
+ *
+ * 入口：node .trae/scripts/gate-scenarios.mjs；脚手架：./_harness.mjs
  */
 import {
   REQ_SPEC,
@@ -15,12 +18,14 @@ import {
   relToProject,
   writeFixture,
   check,
+  clearDispatchedRoles,
   path,
   fs
 } from './_harness.mjs';
 
 export function adversarialScenarios() {
   console.log('== 对抗 / 健壮性 ==');
+  clearDispatchedRoles();
 
   const cancelled = writeFixture('adv-cancelled', {
     'docs/process/process.md': cancelledProcess(),

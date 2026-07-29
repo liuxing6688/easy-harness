@@ -1,4 +1,10 @@
-﻿import {
+/**
+ * R20：轻量模式声明须有用户确认，否则拒绝除 PM/RA 外角色派发。
+ *
+ * 入口：node .trae/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
+import {
   test, fixtureProcess, cleanup, assert, path, fs,
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,
   isCancelledProcessFile, checkRoleDispatchGate, checkBatchApiTestReport, isApiTestExempt,
@@ -86,7 +92,7 @@ test('R20: 工作流模式确认行匹配人话意图时通过', () => {
     '',
     '| 确认项 | 时间 | 用户原话摘要 |',
     '| ------ | ---- | ------------ |',
-    '| 工作流模式确认 | 2026-01-01 | AskQuestion 选「修缺陷」（热修复） |',
+    '| 工作流模式确认 | 2026-01-01 | AskUserQuestion 代询「修缺陷」（热修复） |',
     '',
   ].join('\n');
   assert.equal(checkLiteModeConfirmed(md).ok, true);

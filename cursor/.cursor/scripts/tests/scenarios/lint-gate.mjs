@@ -1,5 +1,8 @@
 /**
- * 场景套件：lintGateScenarios
+ * 场景套件：lintGateScenarios（L1–L4）
+ * 覆盖 R15：lint 未通过时 stop/派发 TE 拦截，以及双要素豁免放行。
+ *
+ * 入口：node .cursor/scripts/gate-scenarios.mjs；脚手架：./_harness.mjs
  */
 import {
   REQ_SPEC,

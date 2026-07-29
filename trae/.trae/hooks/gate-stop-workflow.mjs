@@ -1,9 +1,30 @@
 #!/usr/bin/env node
 /**
- * stop 门禁：流程未完成时注入 followup，防止开发后直接收尾。
- * 判据顺序的说明权威见 `.trae/harness/spec/mechanical-gates.md` §8.2（执行权威：Hook/脚本），修改行为须同步更新该节。
- * 自锁防护（`.trae/harness/spec/mechanical-gates.md` §8.4）：见 gate-dev-workflow.mjs 顶部注释，策略一致
- *（此处「fail-open」等价于放行/不注入 followup，即 `{}`）。
+ * Stop 门禁：代理拟结束回合时，若流程未完成则注入 reason（阻断并作为新 Query），防止开发后直接收尾。
+ *
+ * 触发：`hooks.json` → `Stop`（`loop_limit: 3`）。
+ * 放行（输出 `{}`，不阻断）条件（命中即放行）：
+ *   - 活跃 process.md 不存在 / 读不到内容；
+ *   - R10 `cancelled`（已取消流程不再被催促）；
+ *   - `blocking: true`（阻塞等待用户决策）；
+ *   - 全流程测试闭环：`finalTestRequired && finalTestComplete && lintPassed && staticScanPassed`。
+ *
+ * 判据顺序的说明权威见 `.trae/harness/spec/mechanical-gates.md` §8.2（执行权威：Hook/脚本）。
+ * 修改行为须同步更新该节与 `parseWorkflowState`（dispatch.mjs）。
+ * 关键判据概览（按优先级，命中即阻断并注入 reason）：
+ *   R31 回退上限 → 开发进行中 → 待分派 QE → QE 未完成
+ *   → R15 lint → R16 静态扫描
+ *   →（hotfix R11 折叠通道 | 全量：批次 E2E/R14/R17/批次测试 → 最终 E2E/最终整体测试）
+ *
+ * 软性副作用：hotfix 唯一测试通道完成后，R9 可向 process.md 写一次性接口/存储提醒，
+ * 但绝不影响本次 allow/阻断 判定（best-effort，异常吞掉）。
+ *
+ * Trae Stop stdout 契约（https://docs.trae.cn/ide_hook-configuration-reference）：
+ *   - 放行：`{}`
+ *   - 阻断并注入为新 Query：`{ decision: 'block', reason: string }`（**不**用 `followup_message`，Trae 不识别）
+ *
+ * 自锁防护（§8.4）：与 gate-dev-workflow 一致；此处「fail-open」= 输出 `{}`（不阻断）。
+ * 共享判据：`./workflow-gate-lib.mjs`。
  */
 function failOpenAllow(context, err, lib) {
   process.stderr.write(`[gate-stop-workflow] fail-open (${context}): ${err?.message ?? err}\n`);
@@ -33,6 +54,7 @@ async function main() {
     parseWorkflowState,
     recordHotfixP0SoftReminder,
     checkHotfixP0InterfaceStorageMention,
+    checkRollbackLimit,
   } = lib;
 
   function exitAllow() {
@@ -96,6 +118,15 @@ async function main() {
         }
       }
       exitAllow();
+    }
+
+    // R31：回退计数上限。置于「全流程闭环放行」之后——已全绿的流程不因历史回退次数被倒扣。
+    // 权威：rollback.md；实现补齐见 mechanical-gates.md（R12：文档声称须有实现）。
+    const rollback = checkRollbackLimit(content);
+    if (!rollback.ok) {
+      exitFollowup(
+        `【流程门禁】（R31 回退上限）${rollback.message}按 rollback.md，同一对象累计回退超过 ${rollback.limit} 次即须停止推进：请调用 project-manager 将 frontmatter \`blocking\` 置为 true、在「## 阻塞原因」写明反复回退的根因与已产出成果物，并在返回结果中标注「需要用户确认：[继续投入/调整方案/终止流程]」由顶层 Agent 用 \`AskUserQuestion\` 代为请用户决策（Trae 适配：PM 为 Subagent，不含 \`AskUserQuestion\` 工具）。不得在未阻塞的情况下继续推进或收尾。`,
+      );
     }
 
     // 开发进行中

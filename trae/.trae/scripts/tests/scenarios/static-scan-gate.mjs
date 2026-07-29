@@ -1,5 +1,8 @@
-﻿/**
- * 场景套件：staticScanGateScenarios
+/**
+ * 场景套件：staticScanGateScenarios（S1–S5）
+ * 覆盖 R16：重复代码/安全扫描未通过时的 stop 与派发拦截，以及分项豁免。
+ *
+ * 入口：node .trae/scripts/gate-scenarios.mjs；脚手架：./_harness.mjs
  */
 import {
   REQ_SPEC,
@@ -22,7 +25,8 @@ import {
   path,
   fs,
   QE_DONE_ROWS,
-  QUALITY_REPORT_CLEAN
+  QUALITY_REPORT_CLEAN,
+  dispatchWithRoles
 } from './_harness.mjs';
 
 export function staticScanGateScenarios() {
@@ -81,7 +85,7 @@ export function staticScanGateScenarios() {
   };
 
   const roleScanFail = writeFixture('static-scan-role-fail', {
-    'docs/process/process.md': greenfieldReady(QE_DONE_ROWS),
+    'docs/process/process.md': greenfieldReady(QE_DONE_ROWS, dispatchWithRoles(['test-engineer'])),
     ...roleBase,
   });
   const roleFailProc = relToProject(path.join(roleScanFail, 'docs/process/process.md'));
@@ -93,7 +97,7 @@ export function staticScanGateScenarios() {
   });
 
   const roleScanPass = writeFixture('static-scan-role-pass', {
-    'docs/process/process.md': greenfieldReady(QE_DONE_ROWS),
+    'docs/process/process.md': greenfieldReady(QE_DONE_ROWS, dispatchWithRoles(['test-engineer'])),
     ...roleBase,
   });
   const rolePassProc = relToProject(path.join(roleScanPass, 'docs/process/process.md'));

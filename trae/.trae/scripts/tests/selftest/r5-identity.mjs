@@ -1,3 +1,9 @@
+/**
+ * R5：顶层会话 id 基准（$TRAE_ENV_FILE 主源 + 文件兜底）、身份健康度、isRootConversationCaller、角色↔路径匹配。
+ *
+ * 入口：node .trae/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
 import {
   test, fixtureProcess, cleanup, assert, path, fs,
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,
@@ -12,7 +18,7 @@ import {
   getDevLineStatusForTaskPack, ROOT_CONVERSATION_STATE, DISPATCHED_ROLES_STATE,
   recordRootConversationId, writeRootSessionIdToEnvFile, readRootSessionIdFromEnv,
   checkLiteModeConfirmed, hasLiteModeConfirmation, getWorkflowMode,
-  getDeclaredWorkflowMode, readRootConversationId, isRootConversationCaller, recordDispatchedRole,
+  getDeclaredWorkflowMode, readRootConversationId, isRootConversationCaller, isTopLevelAgent, recordDispatchedRole,
   readRecentlyDispatchedRoles, isGatedRoleArtifactPath, expectedRolesForPath,
   checkRolePathPermission, collectActiveRoleSlugs, checkReconEvidenceRef,
   excerptInDesignAnchorWindow, extractDesignSectionWindow,
@@ -121,6 +127,28 @@ test('R5: recordRootConversationId 对空/非字符串值不写入', () => {
   recordRootConversationId(null);
   recordRootConversationId(123);
   assert.equal(readRootConversationId(), null);
+});
+
+// isTopLevelAgent：基于 agent_id 的顶层身份判定（2026-07-29 修复）
+// 实测 Trae 子代理与顶层共享 session_id，isRootConversationCaller 无法区分；
+// isTopLevelAgent 用 agent_id 直接判定：solo_agent=顶层，其他=子代理。
+console.log('== R5 isTopLevelAgent：基于 agent_id 的顶层身份判定（session_id 共享修复）==');
+test('R5 agent_id: solo_agent 判定为顶层（deny 受门禁写入）', () => {
+  assert.equal(isTopLevelAgent('solo_agent'), true);
+});
+test('R5 agent_id: 项目级角色名判定为子代理（放行）', () => {
+  for (const role of ['development-engineer', 'system-architect', 'quality-engineer', 'test-engineer', 'requirement-reviewer', 'requirements-analyst', 'project-manager']) {
+    assert.equal(isTopLevelAgent(role), false, `${role} 应为子代理`);
+  }
+});
+test('R5 agent_id: 内置子代理类型判定为子代理', () => {
+  assert.equal(isTopLevelAgent('search'), false);
+  assert.equal(isTopLevelAgent('general_purpose_task'), false);
+});
+test('R5 agent_id: 缺失/空 fail-open（返回 false，不误拦）', () => {
+  assert.equal(isTopLevelAgent(undefined), false);
+  assert.equal(isTopLevelAgent(null), false);
+  assert.equal(isTopLevelAgent(''), false);
 });
 
 // P2-2/P2-3 修复：$TRAE_ENV_FILE 主源（env var）优先级与跨会话隔离测试
@@ -252,14 +280,98 @@ test('R5: QE 活跃时拒绝写源码（须 DE）', () => {
   fixtureProcess(content);
   const r = checkRolePathPermission('src/index.ts');
   assert.equal(r.ok, false);
-  // forSource 收紧后活跃集不含 DE → no-active-role；若仅有非 DE 活跃则为 role-path-mismatch
+  // 最近派发为 QE → 直接 non-de-dispatched-denied；无派发记录时 forSource 收紧后为 no-active-role / role-path-mismatch
   assert.ok(
-    r.reason === 'no-active-role' || r.reason === 'role-path-mismatch',
+    r.reason === 'non-de-dispatched-denied' ||
+      r.reason === 'no-active-role' ||
+      r.reason === 'role-path-mismatch',
     `unexpected reason: ${r.reason}`,
+  );
+});
+test('R5: 最近派发 TE 时即使进度残留 DE 正在执行也拒绝写产品源码', () => {
+  clearDispatchedRoles();
+  recordDispatchedRole('development-engineer');
+  recordDispatchedRole('test-engineer');
+  const content = [
+    '---',
+    'workflow_mode: full',
+    '---',
+    '',
+    '## 当前分派计划',
+    '',
+    '| 任务包编号 | 分派角色 | 并行/串行 | 状态 |',
+    '| --- | --- | --- | --- |',
+    '| T0-1 | development-engineer | 串行 | 进行中 |',
+    '',
+    '## 进度列表',
+    '',
+    '| 角色/开发线 | 任务名称 | 状态 | 说明 |',
+    '| --- | --- | --- | --- |',
+    '| 开发工程师 | T0-1 | 正在执行 | |',
+    '| 测试工程师 | 批次集成测试 T0-1 | 正在执行 | |',
+    '',
+  ].join('\n');
+  fixtureProcess(content);
+  const r = checkRolePathPermission('web/src/app/App.tsx');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'non-de-dispatched-denied');
+});
+test('R5: 最近派发 TE 时可写 e2e，不可写产品源码；DE 活跃时不可写 e2e', () => {
+  clearDispatchedRoles();
+  recordDispatchedRole('test-engineer');
+  const teContent = [
+    '---',
+    'workflow_mode: full',
+    '---',
+    '',
+    '## 当前分派计划',
+    '',
+    '| 任务包编号 | 分派角色 | 并行/串行 | 状态 |',
+    '| --- | --- | --- | --- |',
+    '| T0-1 | test-engineer | 串行 | 批次测试 |',
+    '',
+    '## 进度列表',
+    '',
+    '| 角色/开发线 | 任务名称 | 状态 | 说明 |',
+    '| --- | --- | --- | --- |',
+    '| 测试工程师 | 批次集成测试 T0-1 | 正在执行 | |',
+    '',
+  ].join('\n');
+  fixtureProcess(teContent);
+  assert.equal(checkRolePathPermission('e2e/specs/batch.spec.ts').ok, true);
+  assert.equal(checkRolePathPermission('src/index.ts').ok, false);
+
+  clearDispatchedRoles();
+  recordDispatchedRole('development-engineer');
+  const deContent = [
+    '---',
+    'workflow_mode: full',
+    '---',
+    '',
+    '## 当前分派计划',
+    '',
+    '| 任务包编号 | 分派角色 | 并行/串行 | 状态 |',
+    '| --- | --- | --- | --- |',
+    '| T0-1 | development-engineer | 串行 | 进行中 |',
+    '',
+    '## 进度列表',
+    '',
+    '| 角色/开发线 | 任务名称 | 状态 | 说明 |',
+    '| --- | --- | --- | --- |',
+    '| 开发工程师 | T0-1 | 正在执行 | |',
+    '',
+  ].join('\n');
+  fixtureProcess(deContent);
+  const deE2e = checkRolePathPermission('e2e/specs/batch.spec.ts');
+  assert.equal(deE2e.ok, false);
+  assert.ok(
+    deE2e.reason === 'role-path-mismatch' || deE2e.reason === 'no-active-role',
+    `unexpected reason: ${deE2e.reason}`,
   );
 });
 test('R5: DE 正在执行时允许写源码', () => {
   clearDispatchedRoles();
+  recordDispatchedRole('development-engineer');
   const content = [
     '---',
     'workflow_mode: full',
@@ -284,4 +396,3 @@ test('R5: DE 正在执行时允许写源码', () => {
 });
 restoreDispatchedRoles();
 restoreReconDir();
-

@@ -1,8 +1,14 @@
 #!/usr/bin/env node
 /**
  * 跨技术栈 QE 命令运行器——Windows 退出码不可靠时的留痕手段。
- * 按 harness.config.json → qe.commands 覆盖，或按项目根目录构建清单文件自动探测技术栈，
- * 运行 test/lint/audit 命令，将退出码与结果摘要落盘到 test-results/qe/qe-run-result.json。
+ *
+ * 职责：按技术栈探测（或 harness.config.json → qe.commands 覆盖）运行
+ * test / lint / audit，将退出码与摘要落盘到 `test-results/qe/qe-run-result.json`。
+ *
+ * 注意：本脚本**不是** R15/R16 硬门禁运行器。
+ *   - 编程规范硬门禁 → `lint-run.mjs`（产物 `.lint-result.json`）
+ *   - 静态扫描硬门禁 → `static-scan-run.mjs`（产物 `.static-scan-result.json`）
+ * 本脚本供 QE 在质量报告中留痕 / 本地快速跑通；Hook 不读 `qe-run-result.json`。
  *
  * 用法：
  *   node .cursor/scripts/qe-run.mjs                 # 运行 test + lint + audit
@@ -18,6 +24,10 @@ const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const HARNESS_CONFIG = path.join(PROJECT_ROOT, '.cursor/harness.config.json');
 const RESULT_DIR = path.join(PROJECT_ROOT, 'test-results/qe');
 
+/**
+ * 技术栈探测表：清单文件 → 默认 test/lint/audit 命令。
+ * lint 空串表示该栈无默认 linter（与 lint-run-lib.STACK_LINT_COMMANDS 口径一致）。
+ */
 const STACK_DETECTORS = [
   {
     stack: 'node',
@@ -75,6 +85,7 @@ const STACK_DETECTORS = [
   },
 ];
 
+/** 解析 `--key=value` CLI 参数。 */
 function parseArgs(argv) {
   const result = {};
   for (const arg of argv) {
@@ -84,6 +95,7 @@ function parseArgs(argv) {
   return result;
 }
 
+/** @param {string} pattern 清单文件名或通配 */
 function manifestExists(pattern) {
   if (!pattern.includes('*')) {
     return fs.existsSync(path.join(PROJECT_ROOT, pattern));
@@ -96,6 +108,7 @@ function manifestExists(pattern) {
   }
 }
 
+/** @returns {typeof STACK_DETECTORS[number]|null} */
 function detectStack() {
   for (const detector of STACK_DETECTORS) {
     if (manifestExists(detector.manifest)) return detector;
@@ -103,6 +116,7 @@ function detectStack() {
   return null;
 }
 
+/** 读取 harness.config.json → qe.commands 覆盖表（可部分覆盖）。 */
 function loadConfigOverrides() {
   if (!fs.existsSync(HARNESS_CONFIG)) return {};
   try {
@@ -113,6 +127,10 @@ function loadConfigOverrides() {
   }
 }
 
+/**
+ * 执行单项命令；空命令记为 skipped（不计入失败）。
+ * @returns {{ command: string|null, exitCode: number|null, skipped?: boolean, reason?: string, output?: string }}
+ */
 function runCommand(name, command) {
   if (!command) {
     return { command: null, exitCode: null, skipped: true, reason: '未配置该命令' };
@@ -145,6 +163,7 @@ function main() {
   const detected = detectStack();
   const overrides = loadConfigOverrides();
   const baseCommands = detected?.commands ?? {};
+  // 配置覆盖优先于栈默认（可只覆盖部分键）。
   const commands = { ...baseCommands, ...overrides };
 
   const results = {};

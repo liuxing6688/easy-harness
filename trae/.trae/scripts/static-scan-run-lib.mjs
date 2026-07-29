@@ -1,15 +1,13 @@
 /**
- * static-scan-run.mjs 的纯函数库：重复代码检测（DRY）与安全静态扫描（密钥泄露）的
- * 命令解析与 gatePassed 判据计算。与 workflow-gate-lib.mjs 独立（不引入运行时状态
- * 依赖），便于单测覆盖。
+ * static-scan-run.mjs 的纯函数库：重复代码（DRY）与安全静态扫描的命令解析 / gatePassed。
  *
- * 静态代码质量门禁（R16，.trae/harness/spec/mechanical-gates.md §8.2 唯一权威定义）：QE 阶段须运行重复代码检测
- * 与安全静态扫描且均退出码为 0，机读结果落盘 test-results/qe/.static-scan-result.json。
- * 两项工具均经 `npx` 获取（jscpd-rs / gitleaks-secret-scanner），跨技术栈通用，
- * 不像 lint-run-lib.mjs 那样需要按技术栈探测——本框架已强制要求 Node.js >= 18，
- * `npx` 在任意技术栈项目中均可用。
- * `gatePassed = duplication.gatePassed && security.gatePassed`，二者可分别独立豁免
- * （见 workflow-gate-lib.mjs 的 isDupCheckExempt / isSecurityScanExempt）。
+ * 与 workflow-gate-lib.mjs 独立，便于单测。运行器：`./static-scan-run.mjs`；
+ * Hook 消费：`readStaticScanResult()` → stop / R13。
+ *
+ * R16（mechanical-gates.md §8.2）：两项均须退出码 0；经 npx 获取（jscpd-rs /
+ * gitleaks-secret-scanner），跨技术栈通用，不做 per-stack 探测。
+ * gatePassed = duplication.gatePassed && security.gatePassed；可分别双要素豁免。
+ * 反弱化：禁止擅自提高 --threshold 或扩大 --ignore（见 mechanical-gates.md）。
  */
 
 /** 重复代码检测默认命令：jscpd-rs，5% 阈值，超限退出码非 0，JSON 报告落盘供人工核查 */

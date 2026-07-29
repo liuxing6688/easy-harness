@@ -1,5 +1,9 @@
-﻿/**
- * 门禁域：dispatch — R13 角色派发门禁、parseWorkflowState
+/**
+ * 门禁域：dispatch — R13 角色派发门禁（checkRoleDispatchGate）、parseWorkflowState（stop 门禁状态机）。
+ *
+ * 主要消费方：gate-role-sequence、gate-stop-workflow。
+ * 修改 ROLE_GATE 分支或 state 字段时须同步 mechanical-gates.md §8.1/§8.2 与场景回归。
+ * 域对照见 ./README.md。
  */
 import {
   readProcessMd,
@@ -10,6 +14,8 @@ import {
   LITE_WORKFLOW_MODES,
   checkLiteModeConfirmed,
   hasValidDispatchPlan,
+  extractSection,
+  normalizeRoleSlug,
 } from './core.mjs';
 import { checkRequirementReady, checkHotfixDesign } from './iteration.mjs';
 import {
@@ -17,6 +23,7 @@ import {
   checkDesignReviewClean,
   checkTechSelectionConfirmed,
   checkHotfixP0Impact,
+  checkIsomorphicModuleSectionReady,
 } from './design.mjs';
 import {
   extractQeDispatchTaskPacks,
@@ -36,6 +43,90 @@ import {
 import { roleProgressStats, testEngineerStats } from './role-path.mjs';
 import { readE2eResult, readLintResult, readStaticScanResult } from './iteration.mjs';
 
+/**
+ * R32：从 process.md 的「## 待派发角色列表」与「## 当前分派计划」解析出项目经理已计划的角色 slug 集合。
+ *
+ * 仅解析 PM 书面计划，**不**合并「最近派发」或「进度正在执行」——后者会使 R32 检查循环放行
+ * （recordDispatchedRole 在 checkRoleDispatchGate 之前已落盘）。
+ *
+ * @param {string} content process.md 全文
+ * @returns {Set<string>} 已计划角色 slug 集合（空集合表示 PM 尚未写计划或格式不识别）
+ */
+export function extractPlannedRoles(content) {
+  const roles = new Set();
+  if (!content) return roles;
+
+  // ## 待派发角色列表：| 角色 | 说明 | — 第一列为角色名
+  const pending = extractSection(content, '待派发角色列表');
+  if (pending) {
+    for (const line of pending.split('\n')) {
+      const t = line.trim();
+      if (!t.startsWith('|') || /^\|[\s|:-]+\|?$/.test(t)) continue;
+      if (/^\|\s*角色\s*\|/.test(t)) continue;
+      const cells = t.split('|').slice(1, -1).map((c) => c.trim());
+      if (cells.length >= 1) {
+        const slug = normalizeRoleSlug(cells[0]);
+        if (slug) roles.add(slug);
+      }
+    }
+  }
+
+  // ## 当前分派计划：| 任务包编号 | 分派角色 | 并行/串行 | 状态 | — 第二列为角色名
+  const plan = extractSection(content, '当前分派计划');
+  if (plan) {
+    for (const line of plan.split('\n')) {
+      const t = line.trim();
+      if (!t.startsWith('|') || /^\|[\s|:-]+\|?$/.test(t)) continue;
+      if (/^\|\s*任务包编号\s*\|/.test(t)) continue;
+      const cells = t.split('|').slice(1, -1).map((c) => c.trim());
+      if (cells.length >= 2) {
+        const slug = normalizeRoleSlug(cells[1]);
+        if (slug) roles.add(slug);
+      }
+    }
+  }
+
+  return roles;
+}
+
+/**
+ * R32：分派计划匹配——校验被派发角色是否在项目经理的「## 待派发角色列表」或
+ * 「## 当前分派计划」中。机械化 AGENTS.md §5.1.2「须先经 PM 写入 process.md，
+ * 再仅依 ## 当前分派计划 与 ## 待派发角色列表 发起 Task」与 R8「禁止越级发起 Task」。
+ *
+ * **设计取舍（fail-open 边界）**：
+ * - 两节均有数据行但不含本角色 → deny（PM 已计划其他角色，顶层不得越级）
+ * - 两节均空/缺失 → fail-open（PM 尚未写计划或格式差异，避免误杀合法流程）
+ *
+ * 不复用 collectActiveRoleSlugs：后者合并「最近派发」，本检查须排除
+ * （否则 recordDispatchedRole 已落盘会使检查循环放行）。
+ *
+ * @param {string} role agent slug（如 `system-architect`）
+ * @returns {{ ok: boolean, reason: string, message?: string }}
+ */
+export function checkDispatchPlanMatch(role) {
+  const content = readProcessMd();
+  if (!content) return { ok: true, reason: 'no-process' };
+
+  const planned = extractPlannedRoles(content);
+
+  // 两节均无数据行：fail-open（PM 尚未写计划或格式差异）
+  if (planned.size === 0) return { ok: true, reason: 'no-plan-fail-open' };
+
+  if (planned.has(role)) return { ok: true, reason: 'in-plan' };
+
+  return {
+    ok: false,
+    reason: 'not-in-dispatch-plan',
+    message: `R8/R32：项目经理「## 待派发角色列表 / ## 当前分派计划」未包含 ${role}，顶层代理不得越级派发该角色。须先派 project-manager 更新分派计划后再发起该角色 Task。`,
+  };
+}
+
+/**
+ * R13：按角色校验门禁链前置条件是否满足。
+ * @param {string} role agent slug（如 `development-engineer`）
+ * @returns {{ ok: boolean, reason: string, message?: string }}
+ */
 export function checkRoleDispatchGate(role) {
   const content = readProcessMd();
   if (!content) return { ok: true, reason: 'no-process-yet' };
@@ -69,6 +160,12 @@ export function checkRoleDispatchGate(role) {
       return { ok: false, reason: lite.reason, message: lite.message };
     }
   }
+
+  // R32：分派计划匹配——受门禁角色须在 PM 的分派计划中（§5.1.2 / R8 越级派发机械化）。
+  // project-manager / requirements-analyst 不在 GATED_ROLES，已由上方 lite-mode 分支与
+  // switch default 放行；此处仅约束 SA/RR/DE/QE/TE。
+  const planMatch = checkDispatchPlanMatch(role);
+  if (!planMatch.ok) return planMatch;
 
   switch (role) {
     case 'system-architect': {
@@ -112,6 +209,15 @@ export function checkRoleDispatchGate(role) {
             ok: false,
             reason: tech.reason,
             message: tech.message,
+          };
+        }
+        // R25：非 stub 设计文档须已排查同构模块并声明共享 primitive
+        const iso = checkIsomorphicModuleSectionReady();
+        if (!iso.ok) {
+          return {
+            ok: false,
+            reason: iso.reason,
+            message: iso.message,
           };
         }
       }
@@ -360,7 +466,5 @@ export function parseWorkflowState(content) {
     workflowMode,
   };
 }
-
-
 
 

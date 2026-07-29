@@ -1,4 +1,10 @@
-﻿import {
+/**
+ * R6：源码/扩展名路径门禁、.trae/scripts|agents|hooks 纳入、扩展名豁免目录。
+ *
+ * 入口：node .trae/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
+import {
   test, fixtureProcess, cleanup, assert, path, fs,
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,
   isCancelledProcessFile, checkRoleDispatchGate, checkBatchApiTestReport, isApiTestExempt,
@@ -77,7 +83,11 @@ test('R6: .trae/hooks 下的文件受门禁保护（豁免标记文件除外）'
   assert.equal(isGatedDevPath('.trae/hooks/gate-foo.mjs'), true);
   assert.equal(isGatedDevPath('.trae/hooks/.toolchain-install-approved.json'), false);
 });
-test('R6: 治理配置文件不纳入机制门禁（文字约束覆盖）', () => {
+test('R6: 治理配置文件不走 DE 源码门禁（改由 R29 自治资产分级裁决）', () => {
+  // 这些路径刻意不进 isGatedDevPath——否则会被当成 DE 源码而要求分派计划。
+  // 它们的保护由 R29 承担：hooks.json/harness.config.json → ask（人工批准），
+  // harness-state.json → 角色门禁（project-manager）。
+  // 详见 selftest/r28-r31-hardening.mjs 与 mechanical-gates.md §8.5。
   assert.equal(isGatedDevPath('.trae/templates/process.md'), false);
   assert.equal(isGatedDevPath('.trae/harness.config.json'), false);
   assert.equal(isGatedDevPath('.trae/hooks.json'), false);
@@ -86,6 +96,12 @@ test('R6: 治理配置文件不纳入机制门禁（文字约束覆盖）', () =
 test('R6: 常规源码路径仍受门禁保护（回归既有行为）', () => {
   assert.equal(isGatedDevPath('src/index.ts'), true);
   assert.equal(isGatedDevPath('docs/requirement/requirement-list.md'), false);
+});
+test('R5: e2e/** 纳入 isGatedDevPath，期望角色为 test-engineer', () => {
+  assert.equal(isGatedDevPath('e2e/specs/foo.spec.ts'), true);
+  assert.equal(isGatedDevPath('e2e/helpers/nav.ts'), true);
+  assert.deepEqual(expectedRolesForPath('e2e/specs/foo.spec.ts'), ['test-engineer']);
+  assert.deepEqual(expectedRolesForPath('e2e/helpers/nav.ts'), ['test-engineer']);
 });
 test('R5: docs 角色成果物纳入 isGatedRoleArtifactPath（与 isGatedDevPath 互补）', () => {
   assert.equal(isGatedRoleArtifactPath('docs/requirement/requirement-list.md'), true);
@@ -98,6 +114,11 @@ test('R5: docs 角色成果物纳入 isGatedRoleArtifactPath（与 isGatedDevPat
     'requirements-analyst',
   ]);
   assert.deepEqual(expectedRolesForPath('src/app.ts'), ['development-engineer']);
+});
+test('R5: docs 下代码扩展名期望 DE（Finding #2），文档扩展名仍期望对应角色', () => {
+  assert.deepEqual(expectedRolesForPath('docs/design/notes.py'), ['development-engineer']);
+  assert.deepEqual(expectedRolesForPath('docs/design/detail-design-spec.md'), ['system-architect']);
+  assert.equal(isGatedDevPath('docs/design/notes.py'), true);
 });
 
 

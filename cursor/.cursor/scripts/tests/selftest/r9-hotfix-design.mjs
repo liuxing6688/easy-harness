@@ -1,3 +1,9 @@
+/**
+ * R9：hotfix 进入开发前须存在 detail-design-spec.md（checkHotfixDesign）。
+ *
+ * 入口：node .cursor/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
 import {
   test, fixtureProcess, cleanup, assert, path, fs,
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,

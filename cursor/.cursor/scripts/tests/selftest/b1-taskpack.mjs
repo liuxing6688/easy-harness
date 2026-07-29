@@ -1,3 +1,9 @@
+/**
+ * B1：进度列表按任务包编号取最新有效状态；已作废/superseded tombstone。
+ *
+ * 入口：node .cursor/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
 import {
   test, fixtureProcess, cleanup, assert, path, fs,
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,

@@ -1,15 +1,28 @@
 #!/usr/bin/env node
 /**
- * subagentStart Hook: records the top-level (root) conversation id (R5 mechanical
- * hardening, see the header comment above recordRootConversationId in
- * workflow-gate-lib.mjs). This hook only records; it never denies subagent
- * creation -- whether a subagent SHOULD be created is still decided by
- * gate-role-sequence (R13) and other hooks.
+ * subagentStart 门禁（R5 机械化补强）：仅记录顶层 conversation_id，从不 deny。
  *
- * Fail-open safety net (consistent with the other 5 hooks, see
- * `.cursor/harness/spec/mechanical-gates.md` section 8.4): if the lib fails to
- * load or an unexpected error occurs while recording, fail open (allow) so a
- * broken tracking hook never blocks subagent creation.
+ * 触发：`hooks.json` → `subagentStart`（matcher: `.*`，`failClosed: false`）。
+ * 职责：把「首次」subagentStart 的调用方会话 id 落盘为顶层基准
+ * （`.cursor/hooks/.root-conversation-id.json`），供 gate-dev-workflow /
+ * gate-dev-shell 的 `isRootConversationCaller` 拦截顶层代写/代执行。
+ *
+ * 重要语义（见 identity.mjs / mechanical-gates.md §8.5）：
+ *   - subagentStart 的 conversation_id 始终是**调用方**会话 id；
+ *   - 框架内第一次 subagentStart 通常是顶层聊天派发 project-manager，该值即 root id；
+ *   - `recordRootConversationId`：TTL 内不覆盖（防嵌套子代理误写），超 TTL 自愈覆盖；
+ *   - 本 Hook **只记录、不裁决**——是否允许创建子代理仍由 gate-role-sequence（R13）等决定。
+ *
+ * fail-open（§8.4，与其余 Hook 一致）：lib 加载失败或记录期未预期异常时仍 allow，
+ * 避免跟踪 Hook 故障阻断子代理创建（身份拦截会随之降级，见 inspectIdentityBaseline 告警）。
+ *
+ * 共享判据：`./workflow-gate-lib.mjs`。
+ */
+/**
+ * 门禁自锁逃生：写 stderr（若有 err）、可选落盘、stdout 输出 allow 后退出。
+ * @param {string} context
+ * @param {unknown} [err]
+ * @param {object} [lib]
  */
 function failOpenAllow(context, err, lib) {
   if (err) {
@@ -17,7 +30,7 @@ function failOpenAllow(context, err, lib) {
     try {
       lib?.recordFailOpenEvent?.('gate-subagent-track', context, err);
     } catch {
-      /* logging failure must not affect fail-open allow */
+      /* 落盘失败不影响 fail-open 放行 */
     }
   }
   process.stdout.write(JSON.stringify({ permission: 'allow' }));
@@ -37,11 +50,7 @@ async function main() {
 
   try {
     const input = await readStdinJsonAsync();
-    // subagentStart's conversation_id is always the CALLER's session id.
-    // The first-ever subagentStart in this framework is always the top-level
-    // chat dispatching project-manager, so that value is exactly the root id.
-    // recordRootConversationId only writes once (never overwrites), so no
-    // extra guard is needed here even for later, nested subagentStart events.
+    // conversation_id = 调用方会话；首次落盘即顶层基准；后续嵌套事件由 TTL 防覆盖保护。
     recordRootConversationId(input?.conversation_id);
     process.stdout.write(JSON.stringify({ permission: 'allow' }));
     process.exit(0);

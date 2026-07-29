@@ -1,3 +1,9 @@
+/**
+ * R20：轻量模式声明须有用户确认，否则拒绝除 PM/RA 外角色派发。
+ *
+ * 入口：node .cursor/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
 import {
   test, fixtureProcess, cleanup, assert, path, fs,
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,

@@ -1,4 +1,10 @@
-﻿import {
+/**
+ * R3：迭代进入开发前四件成果物存在且被 process.md 引用（hotfix/docs-only 豁免）。
+ *
+ * 入口：node .trae/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
+import {
   test, fixtureProcess, cleanup, assert, path, fs,
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,
   isCancelledProcessFile, checkRoleDispatchGate, checkBatchApiTestReport, isApiTestExempt,

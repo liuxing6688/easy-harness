@@ -1,5 +1,8 @@
-﻿/**
- * 场景套件：featureScenarios
+/**
+ * 场景套件：featureScenarios（F1–F2）
+ * 覆盖 feature 迭代：docs/<feature>/ 活跃指针下的门禁链与写入裁决。
+ *
+ * 入口：node .trae/scripts/gate-scenarios.mjs；脚手架：./_harness.mjs
  */
 import {
   REQ_SPEC,
@@ -12,12 +15,14 @@ import {
   relToProject,
   writeFixture,
   check,
+  clearDispatchedRoles,
   path,
   fs
 } from './_harness.mjs';
 
 export function featureScenarios() {
   console.log('== 场景 2：功能迭代 Feature（full，独立子树）==');
+  clearDispatchedRoles();
   const root = writeFixture('feature', {
     'docs/filter/process/process.md': featureReady(),
     'docs/filter/requirement/requirement-spec.md': REQ_SPEC,

@@ -1,4 +1,10 @@
-﻿import {
+/**
+ * R13/QE：分派 QE 前置（开发线状态、未解决问题）与 extractQeDispatchTaskPacks。
+ *
+ * 入口：node .trae/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
+import {
   test, fixtureProcess, cleanup, assert, path, fs,
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,
   isCancelledProcessFile, checkRoleDispatchGate, checkBatchApiTestReport, isApiTestExempt,
@@ -95,12 +101,14 @@ test('R13 QE: 分派计划缺 QE 任务包编号时拒绝', () => {
       '| 任务包编号 | 分派角色 | 并行/串行 | 状态 |',
       '| ---------- | -------- | --------- | ---- |',
       '| T0-1 | development-engineer | 串行 | 待开发 |',
+      '| 待分配 | quality-engineer | 串行 | 待 QE |',
       '',
       '## 待派发角色列表',
       '',
       '| 角色 | 说明 |',
       '| ---- | ---- |',
       '| development-engineer | T0-1 |',
+      '| quality-engineer | 待分配 |',
       '',
       '## 进度列表',
       '',

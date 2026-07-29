@@ -1,5 +1,8 @@
-﻿/**
- * 门禁域：qe — R14–R17 接口测试/存储对账/lint/静态扫描豁免与机读
+/**
+ * 门禁域：qe — R14–R17 接口测试/存储对账、R15–R16 lint/静态扫描豁免与机读、R22 TE 冒烟。
+ *
+ * 「双要素豁免」统一在本域实现（gated-artifacts Applicability + process.md 用户确认关键词）。
+ * 主要消费方：gate-stop-workflow / gate-role-sequence / gate-dev-shell（R22）。域对照见 ./README.md。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,9 +19,11 @@ import {
   sectionHasDataRow,
   hasUnresolvedIssues,
   ROLE_ALIASES,
+  readTextFileSafe,
+  readJsonFileSafe,
 } from './core.mjs';
 import { readLintResult, readStaticScanResult } from './iteration.mjs';
-
+import { readRecentlyDispatchedRoles } from './identity.mjs';
 import {
   extractTaskCode
 } from './role-path.mjs';
@@ -41,6 +46,66 @@ export function isE2eExempt(content) {
   const md = content ?? readProcessMd();
   if (!md) return false;
   return hasE2eExemptionConfirmation(md);
+}
+
+/**
+ * 是否为「替代 E2E WebServer 启动」命令（补强项 3 / TE 冒烟，**R22**）。
+ * 命中 `E2E_WEB_SERVER_COMMAND=` 显式覆盖，或 `npx vite-node` 与 e2e/playwright 同现。
+ */
+export function isAlternativeE2eStartupCommand(command) {
+  if (!command || typeof command !== 'string') return false;
+  if (/\bE2E_WEB_SERVER_COMMAND\s*=/.test(command)) return true;
+  if (/\bnpx\s+vite-node\b/i.test(command) && /e2e|webserver|playwright/i.test(command)) return true;
+  return false;
+}
+
+function hasAlternativeE2eStartupConfirmation(content) {
+  const body = extractSection(content, '用户确认记录');
+  if (!body) return false;
+  for (const line of body.split('\n')) {
+    const t = line.trim();
+    if (!t.startsWith('|')) continue;
+    if (/^\|[\s|:-]+\|?$/.test(t)) continue;
+    // 须含「允许非 dist 启动做 E2E」语义（与 test-engineer.md 强制约束对齐）
+    if (/非\s*dist\s*启动/i.test(t) && /允许|确认/i.test(t)) return true;
+    if (/替代启动/i.test(t) && /E2E|e2e/i.test(t) && /允许|确认/i.test(t)) return true;
+  }
+  return false;
+}
+
+/**
+ * 替代 E2E 启动双要素：gated-artifacts `e2eAlternativeStartup:"allowed"` + 用户确认。
+ */
+export function isAlternativeE2eStartupExempt(content) {
+  const artifacts = loadGatedArtifacts();
+  if (artifacts.e2eAlternativeStartup !== 'allowed') return false;
+  const md = content ?? readProcessMd();
+  if (!md) return false;
+  return hasAlternativeE2eStartupConfirmation(md);
+}
+
+/**
+ * TE 冒烟门禁：最近派发为 test-engineer 时，禁止未经双要素确认的替代 E2E 启动命令。
+ * @returns {{ ok: boolean, reason: string, message?: string }}
+ */
+export function checkTeAlternativeE2eStartup(command) {
+  if (!isAlternativeE2eStartupCommand(command)) {
+    return { ok: true, reason: 'not-alternative-startup' };
+  }
+  const recent = readRecentlyDispatchedRoles();
+  const mostRecent = recent[0];
+  if (mostRecent !== 'test-engineer') {
+    return { ok: true, reason: 'not-te-dispatch' };
+  }
+  if (isAlternativeE2eStartupExempt()) {
+    return { ok: true, reason: 'dual-element-exempt' };
+  }
+  return {
+    ok: false,
+    reason: 'te-alternative-startup-denied',
+    message:
+      'R5/R22（TE 冒烟）：最近派发为 test-engineer，禁止使用 E2E_WEB_SERVER_COMMAND / vite-node 等替代启动命令掩盖生产启动失败。须先用 design/默认生产启动命令（如 npm run start）冒烟；失败则测试不通过并回派 DE。仅当 gated-artifacts.json 声明 e2eAlternativeStartup:"allowed" 且用户在「## 用户确认记录」确认「允许非 dist 启动做 E2E」时方可变通。',
+  };
 }
 
 /**
@@ -221,7 +286,8 @@ export function checkReconEvidenceRef(method) {
   }
   let data;
   try {
-    data = JSON.parse(fs.readFileSync(abs, 'utf8'));
+    data = readJsonFileSafe(abs); // R30
+    if (data === null) throw new Error('unreadable');
   } catch {
     return {
       ok: false,
@@ -306,7 +372,7 @@ export function checkBatchStorageReconciliationReport(content) {
   for (const f of files) {
     let fileContent;
     try {
-      fileContent = fs.readFileSync(path.join(testDir, f), 'utf8');
+      fileContent = readTextFileSafe(path.join(testDir, f)) ?? ''; // R30
     } catch {
       continue;
     }
@@ -478,7 +544,7 @@ export function checkBatchApiTestReport() {
   for (const f of files) {
     let content;
     try {
-      content = fs.readFileSync(path.join(testDir, f), 'utf8');
+      content = readTextFileSafe(path.join(testDir, f)) ?? ''; // R30
     } catch {
       continue;
     }
@@ -497,7 +563,7 @@ export function checkQeClean() {
   const files = fs.readdirSync(qualityDir).filter((f) => /^quality-report.*\.md$/.test(f));
   if (files.length === 0) return { ok: false, reason: 'no-quality-report' };
   for (const f of files) {
-    const content = fs.readFileSync(path.join(qualityDir, f), 'utf8');
+    const content = readTextFileSafe(path.join(qualityDir, f)) ?? ''; // R30
     if (hasUnresolvedIssues(content)) return { ok: false, reason: `unresolved-in-${f}` };
     if (/质量判定[:：]\s*不通过/.test(content)) return { ok: false, reason: `qe-fail-${f}` };
   }
@@ -604,5 +670,3 @@ export function getDevLineStatusForTaskPack(content, taskId) {
   }
   return latest;
 }
-
-

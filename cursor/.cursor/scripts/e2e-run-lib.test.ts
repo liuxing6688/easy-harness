@@ -1,3 +1,7 @@
+/**
+ * e2e-run-lib.mjs 纯函数 vitest 单测（标签解析 / P0 / 豁免 / gatePassed）。
+ * 运行：npx vitest run --config .cursor/scripts/vitest.config.ts
+ */
 import { describe, expect, it } from 'vitest';
 import {
   extractRequirementTag,

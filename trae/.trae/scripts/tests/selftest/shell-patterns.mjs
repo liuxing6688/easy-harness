@@ -1,3 +1,13 @@
+/**
+ * P2-4：Shell 门禁模式表回归——主流包管理器、脚手架与管道安装命令的命中/不误报。
+ *
+ * 校验 `isGatedShellCommand`（见 hooks/lib/core.mjs → getMergedShellPatterns）
+ * 对跨技术栈包管理器（npm/pnpm/yarn/bun/pip/poetry/uv/cargo/go/gem/composer/deno 等）
+ * 与管道安装模式（curl|sh、wget|sh、iwr|iex）的识别覆盖，以及对普通非门禁命令的不误报。
+ *
+ * 入口：node .trae/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
 import {
   test, assert,
   isGatedShellCommand,

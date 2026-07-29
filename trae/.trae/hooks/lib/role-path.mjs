@@ -1,5 +1,8 @@
-﻿/**
- * 门禁域：role-path — 角色↔成果物路径权限、进度统计（B1）
+/**
+ * 门禁域：role-path — 角色↔成果物路径权限、进度统计（B1 最新有效状态 / tombstone）。
+ *
+ * 主要消费方：gate-dev-workflow / gate-dev-shell（checkRolePathPermission）、
+ * gate-stop-workflow / dispatch（roleProgressStats / testEngineerStats）。域对照见 ./README.md。
  */
 import {
   normalizePath,
@@ -11,9 +14,19 @@ import {
   } from './core.mjs';
 import { readRecentlyDispatchedRoles } from './identity.mjs';
 import { isProcessFilePath,
-  isGatedDevPath
+  isGatedDevPath,
+  isE2eTestPath,
+  isHarnessStatePath
 } from './paths.mjs';
 
+/**
+ * 从 process.md 汇聚当前「活跃」角色 slug。
+ * - 默认：最近派发 ∪ 进度「正在执行」∪ 当前分派计划 ∪ 待派发列表；
+ * - `forSource: true`：仅保留 development-engineer（源码写入只认 DE 活跃）。
+ * @param {string|null|undefined} content
+ * @param {{ forSource?: boolean }} [opts]
+ * @returns {string[]}
+ */
 export function collectActiveRoleSlugs(content, { forSource = false } = {}) {
   const roles = new Set();
   const md = content ?? readProcessMd() ?? '';
@@ -79,6 +92,9 @@ export function isGatedRoleArtifactPath(filePath) {
   const p = normalizePath(filePath);
   if (!p) return false;
   if (isProcessFilePath(p)) return true;
+  // **R29**：harness-state.json 决定所有门禁读哪一份 process.md（改写它即可把门禁指向
+  // 一份伪造流程），归项目经理维护，纳入角色门禁而非放任豁免。
+  if (isHarnessStatePath(p)) return true;
   if (/(^|\/)docs\/(.+\/)?requirement\/.+\.(md|mdx|txt)$/.test(p)) return true;
   if (/(^|\/)docs\/(.+\/)?design\/.+\.(md|mdx|txt)$/.test(p)) return true;
   if (/(^|\/)docs\/(.+\/)?quality\/.+\.(md|mdx|txt)$/.test(p)) return true;
@@ -91,20 +107,39 @@ export function expectedRolesForPath(filePath) {
   const p = normalizePath(filePath);
   if (!p) return null;
   if (isProcessFilePath(p)) return ['project-manager'];
-  if (/(^|\/)docs\/(.+\/)?requirement\//.test(p)) return ['requirements-analyst'];
+  if (isHarnessStatePath(p)) return ['project-manager'];
+  // docs 下角色成果物仅匹配文档扩展名；代码扩展名（如 docs/design/notes.py）走下方 isGatedDevPath → DE
+  if (/(^|\/)docs\/(.+\/)?requirement\/.+\.(md|mdx|txt)$/.test(p)) return ['requirements-analyst'];
   if (/(^|\/)docs\/(.+\/)?design\/design-problem-list\.md$/.test(p)) {
     return ['requirement-reviewer', 'system-architect'];
   }
-  if (/(^|\/)docs\/(.+\/)?design\//.test(p)) return ['system-architect'];
-  if (/(^|\/)docs\/(.+\/)?quality\//.test(p)) return ['quality-engineer'];
-  if (/(^|\/)docs\/(.+\/)?test\//.test(p)) return ['test-engineer'];
+  if (/(^|\/)docs\/(.+\/)?design\/.+\.(md|mdx|txt)$/.test(p)) return ['system-architect'];
+  if (/(^|\/)docs\/(.+\/)?quality\/.+\.(md|mdx|txt)$/.test(p)) return ['quality-engineer'];
+  if (/(^|\/)docs\/(.+\/)?test\/.+\.(md|mdx|txt)$/.test(p)) return ['test-engineer'];
+  // e2e 须在通用 isGatedDevPath 分支前：期望 TE，非 DE
+  if (isE2eTestPath(p)) return ['test-engineer'];
   if (isGatedDevPath(p)) return ['development-engineer'];
   return null;
 }
 
 /**
+ * 是否为「仅 DE 可写」的产品/基建源码路径（不含 e2e）。
+ */
+function isDeOnlySourcePath(filePath, expected) {
+  return (
+    Array.isArray(expected) &&
+    expected.length === 1 &&
+    expected[0] === 'development-engineer' &&
+    isGatedDevPath(filePath) &&
+    !isE2eTestPath(filePath)
+  );
+}
+
+/**
  * R5：角色↔路径权限机读。
  * - 源码 / `.trae/scripts|agents|hooks`：须 DE 在进度「正在执行」或当前分派计划中；
+ *   且最近派发角色若为 TE/QE，直接 deny（不因进度表残留 DE 行而放行）（**R21**）；
+ * - e2e/**：期望 test-engineer；非 TE（含 DE）默认 deny（**R23**）；
  * - 文档成果物：须活跃角色（含最近 Task 派发）命中期望角色；
  * - process.md 且尚无任何活跃角色：允许 PM 首次 bootstrap（空进度窗口）。
  */
@@ -113,10 +148,26 @@ export function checkRolePathPermission(filePath) {
   if (!expected) return { ok: true, reason: 'not-role-gated' };
 
   const content = readProcessMd() ?? '';
-  const forSource = expected.length === 1 && expected[0] === 'development-engineer' && isGatedDevPath(filePath);
+  const forSource = isDeOnlySourcePath(filePath, expected);
+
+  // 最近派发明确为 TE/QE 时，禁止写产品源码（即便进度表仍残留 DE「正在执行」）
+  if (forSource) {
+    const recent = readRecentlyDispatchedRoles();
+    const mostRecent = recent[0];
+    const blockedNonDe = mostRecent === 'test-engineer' || mostRecent === 'quality-engineer';
+    if (blockedNonDe) {
+      return {
+        ok: false,
+        reason: 'non-de-dispatched-denied',
+        message: `R5/R21：最近派发角色为 ${mostRecent}，禁止写入产品源码路径「${normalizePath(filePath)}」（仅 development-engineer 可写）。发现缺陷须阻塞并回派开发工程师，不得由测试/质量角色代修。`,
+      };
+    }
+  }
+
   const active = collectActiveRoleSlugs(content, { forSource });
 
-  if (isProcessFilePath(filePath) && active.length === 0) {
+  // PM bootstrap 窗口：首次接收目标时进度/分派尚空，须允许 PM 建立 process.md 与活跃指针
+  if ((isProcessFilePath(filePath) || isHarnessStatePath(filePath)) && active.length === 0) {
     return { ok: true, reason: 'pm-bootstrap-window' };
   }
 
@@ -229,7 +280,5 @@ export function testEngineerStats(content) {
 
   return { batch, final };
 }
-
-
 
 

@@ -13,12 +13,12 @@
 
 | Hook | 触发时机 | 拦截范围 | 放行条件 |
 | ---- | -------- | -------- | -------- |
-| `gate-dev-workflow` | `preToolUse`（Write / StrReplace / ApplyPatch / Delete / EditNotebook） | 源码/构建/根敏感路径（同前）+ **R6** `.cursor/scripts\|agents\|hooks/**` + **`docs` 角色成果物**（`requirement`/`design`/`quality`/`test`/`process.md`，见 `isGatedRoleArtifactPath`）；`docs/` 下非文档扩展名亦按源码门禁。**不纳入机制门禁**：`.cursor/hooks.json`、`.cursor/harness.config.json`、templates/rules/运行时状态等（见 `dotCursorExemptPatterns`） | 判定顺序：**R10 cancelled** → **R5 顶层 conversation_id** → **R5 角色↔路径** →（仅源码路径）`docs-only`/分派计划/**R3**/**R9**/阻塞 → 放行 |
-| `gate-dev-shell` | `beforeShellExecution` | `harness.config.json` 中 `gatedShellPatterns` 及项目额外模式（项目初始化、依赖安装等）；`hooks.json` 使用宽 matcher，脚本内部判定 | 同 `gate-dev-workflow` 放行条件（含 R3/R9/R10 判定） |
-| `gate-toolchain-install` | `beforeShellExecution` | `harness.config.json` 中 `toolchain.installPatterns`（winget、brew、apt、mise、asdf、nix、VS Build Tools 等） | 用户已确认且存在有效的 `.toolchain-install-approved.json` |
-| `gate-role-sequence`（**R13**） | `preToolUse`（Task） | 发起角色 Task 前按门禁链机械校验（同前：R19/R18/R15/R16 等）；**R20**：声明轻量模式但缺「工作流模式确认」时拒绝除 PM/RA 外角色；**放行或 fail-open 前**对可解析角色执行 `recordDispatchedRole`（供 R5 角色↔路径） | 前置条件满足；或目标角色不在门禁表中（`project-manager`/`requirements-analyst` 恒放行，但仍落盘派发记录）；或解析不到目标角色名；`failClosed: false` |
-| `gate-subagent-track`（**R5**） | `subagentStart` | 仅记录顶层 `conversation_id`（首次落盘、不覆盖）；从不 deny | 恒 `allow`（fail-open） |
-| `gate-stop-workflow` | `stop` | 代理拟结束回合时流程未完成（含 **R15 编程规范 lint 门禁未通过**、**R16 静态代码质量门禁未通过**） | 见下方 **stop 门禁判据**；`blocking: true` 或 **`cancelled: true`（R10）** 时放行 |
+| `gate-dev-workflow` | `preToolUse`（Write / StrReplace / ApplyPatch / Delete / EditNotebook） | 源码/构建/根敏感路径（同前）+ **R6** `.cursor/scripts\|agents\|hooks/**` + **`docs` 角色成果物**（`requirement`/`design`/`quality`/`test`/`process.md`，见 `isGatedRoleArtifactPath`）；`docs/` 下非文档扩展名亦按源码门禁；**R6 加强**：代码扩展名默认受门禁（豁免目录见 `gatedPaths.extensionGateExemptDirs`，§8.5）；**R29**：门禁自治资产（运行时标记 / 授权凭证 / 门禁配置与权威文本）一律 deny。仍豁免：templates/rules（见 `dotCursorExemptPatterns`） | 判定顺序：**R10 cancelled** → **R29 自治资产** → **R5 身份基准健康度告警** → **R5 顶层 conversation_id** → **R5 角色↔路径** →（仅源码路径）`docs-only`/分派计划/**R3**/**R9**/阻塞 → 放行 |
+| `gate-dev-shell` | `beforeShellExecution` | `harness.config.json` 中 `gatedShellPatterns` 及项目额外模式（项目初始化、依赖安装等）；**R22**：最近派发为 `test-engineer` 时另拦截替代 E2E 启动命令（`checkTeAlternativeE2eStartup`，见 §8.4）；**R28**：写文件类命令按目标路径套用与 Write 同等判据（§8.5） | 判定顺序：R22 TE 冒烟 → **R28 写文件意图**（R29 自治资产 / opaque 写入 / 目标路径判据）→ `gatedShellPatterns` 命中则同 `gate-dev-workflow` 放行条件（含 R3/R9/R10） |
+| `gate-toolchain-install` | `beforeShellExecution` | `harness.config.json` 中 `toolchain.installPatterns`（winget、brew、apt、mise、asdf、nix、VS Build Tools 等） | 存在有效 `.toolchain-install-approved.json`：须 `userConfirmed: true` + 有效时间戳 + **`commandHash` 与本次命令匹配**（**R29 加强**，§8.5） |
+| `gate-role-sequence`（**R13**） | `preToolUse`（Task） | 发起角色 Task 前按门禁链机械校验（同前：R19/R18/R15/R16 等）；**R10**：活跃流程 `cancelled` 时拒绝除 `project-manager` 外的**全部**角色（先于「不在门禁表即放行」的短路）；**R20**：声明轻量模式但缺「工作流模式确认」时拒绝除 PM/RA 外角色；**放行或 fail-open 前**对可解析角色执行 `recordDispatchedRole`（供 R5 角色↔路径） | 前置条件满足；或目标角色不在门禁表中（`project-manager`/`requirements-analyst` 恒放行，但仍落盘派发记录）；或解析不到目标角色名；`failClosed: false` |
+| `gate-subagent-track`（**R5**） | `subagentStart` | 仅记录顶层 `conversation_id`（TTL 内不覆盖、超 TTL 自愈，见 §8.5）；从不 deny | 恒 `allow`（fail-open） |
+| `gate-stop-workflow` | `stop` | 代理拟结束回合时流程未完成（含 **R15 编程规范 lint 门禁未通过**、**R16 静态代码质量门禁未通过**、**R31 回退计数超上限**） | 见下方 **stop 门禁判据**；`blocking: true` 或 **`cancelled: true`（R10）** 时放行 |
 
 Hook 解析 `## 进度列表` 时同时识别中文角色名与 `.cursor/agents` 的 agent slug（如 `开发工程师` / `development-engineer`），项目经理可按 Task 实际发起名称留痕。
 
@@ -74,6 +74,9 @@ Hook 解析 `## 进度列表` 时同时识别中文角色名与 `.cursor/agents`
 > - **默认工具**：重复代码检测 `jscpd-rs`（`npx --yes jscpd-rs --threshold 5 --exitCode 1 ...`，5% 阈值超限退出码非 0）；安全静态扫描 `gitleaks-secret-scanner`（`npx --yes gitleaks-secret-scanner ...`，检出密钥即退出码非 0）。**命令解析优先级**：`harness.config.json → qe.commands.dupCheck`/`qe.commands.securityScan` 覆盖 > 框架默认值；多数项目不必手配 config。
 > - **判据**：`staticScanPassed = (dupCheckExempt || duplication.gatePassed) && (securityScanExempt || security.gatePassed)`；`docs-only` 视为满足。QE 记录完成但 `staticScanPassed=false` 时 `gate-stop-workflow` 注入 followup，且**不得发起 test-engineer**（判定函数见 `rule-index.md`）。
 > - **适用性豁免**：见上表 R16 两行（重复代码/安全扫描分别独立判定）。
+> - **反弱化条款（2026-07-28 QE R16 消重复盘新增，R12 显式化）**：**禁止**以「降低打回率/减少误报体感」为由提高 `jscpd-rs --threshold`、扩大 `--ignore` 排除目录（默认排除目录——`node_modules`/`dist`/`build`/`vendor`/`target`/`coverage`/`.git`/`test-results`——以外的任何收窄）或缩减 `--reporters`。确因目录结构特殊（如 monorepo 内确需排除的生成代码目录）需要覆盖 `qe.commands.dupCheck` 时，须在质量报告与 `detail-design-spec.md` §5 写明**具体排除路径 + 排除理由**；**修改阈值**（无论升高或降低）一律视为需要用户确认的机械门禁调整，须在 `process.md`「## 用户确认记录」留痕说明理由，否则 QE 不得采用覆盖值——该调整不受本节其余「多数项目不必手配 config」的默认豁免。
+>
+> **R25（设计阶段「同构模块识别」章节机读，唯一权威定义，2026-07-28 QE R16 消重复盘新增）**：发起 `requirement-reviewer` 前（`full`/`single-task`，`hotfix`/`docs-only` 豁免），`checkIsomorphicModuleSectionReady()` 校验活跃 `detail-design-spec.md` 是否含「## 同构模块识别（须逐项列出）」章节：设计文档为 stub（仅标题、无正文）时跳过；非 stub 时须**要么**含「同构组名称」+「共享 Primitive 名称」两列的表格且至少一条真实数据行（每行两列均非空），**要么**显式声明「已排查，无同构资源族」并附非空排查依据（去除标点空白后不少于 4 字）。缺章节/章节为空/表格无数据行/声明缺依据时 `gate-role-sequence` 拒绝发起 `requirement-reviewer`。**背景**：R16 全仓重复代码复盘发现相似资源族（CRUD 路由、页面脚手架、测试 fixture、E2E helper）在设计阶段未被前置识别，并行开发工程师各自「复制改」导致 QE 首轮必然因 duplication 打回；本规则要求设计阶段前置排查并声明共享 primitive，从源头减少同构克隆。**能力边界**：机读只证明「该章节存在且非占位敷衍」，不证明排查是否穷尽、共享 primitive 设计是否合理——语义充分性仍由 `requirement-reviewer`「架构设计原则」维度人工审核。
 >
 > **R19（需求分析师隐性需求确认记录结构校验，唯一权威定义）**：发起 `system-architect` 前，`checkRequirementReady()` 除校验 `requirement-spec.md`/`requirement-list.md` 存在与 `## 用户确认记录` 非空外，须额外校验 `requirement-spec.md`「6. 隐性需求确认记录」章节存在含**真实数据行**的表格，表头必须含「类别、要点、用户确认摘要、关联需求/§7 追溯、状态、影响/决策点」；每条行均不得为空，类别仅可为「假设/边界/取舍/待决/排查结论」，状态仅可为「已确认/待决假设」，关联追溯必须同时含 `requirement-list.md` 的 `R-编号` 与 `§7`，`待决假设` 还须在影响/决策点中含责任方与最晚决策点。该校验验证结构、枚举与追溯，**不验证内容真实性**。目的是为苏格拉底式多轮追问留下可稽核、可供 SA 消费的痕迹，避免「一轮问完即自称理解充分」或用空泛占位行过门禁。缺失或任一结构条件不满足时 `gate-role-sequence` 拒绝发起 `system-architect`。**豁免**：本项不适用双要素豁免机制——需求分析师确认「排查后无隐性要点」时，也须填写合规的「排查结论」行，说明排查范围、用户确认和关联需求，而非声明豁免跳过（隐性需求排查是理解是否充分的一部分，不属于「确不适用/无法运行」的技术性豁免场景）。
 
@@ -116,13 +119,125 @@ Hook 脚本路径：`.cursor/hooks/`。修改 Hook 行为时须同步更新本�
 
 ### 8.4 自锁防护与门禁能力边界
 
-**自锁防护（fail-open）**：Hook 入口脚本（`gate-dev-workflow`、`gate-dev-shell`、`gate-toolchain-install`、`gate-stop-workflow`、`gate-role-sequence`、`gate-subagent-track`）对 `workflow-gate-lib.mjs` 使用动态 `import` + `try/catch`，且执行期逻辑同样包裹在 `try/catch` 中；lib 不可加载或运行期出现未预期异常时 **fail-open 放行**（`gate-stop-workflow` 语义为不注入 followup）并打印 stderr 告警，同时尽量将异常写入活跃 `process.md` 的 `## 门禁异常事件` 并将 `blocking: true`（`recordFailOpenEvent`；cancelled 流程或无法写盘时仅保留 stderr），避免门禁自身损坏导致全流程硬死锁，同时防止静默绕过。策略性 `deny` 不受影响。`gate-role-sequence` 额外在 `hooks.json` 中配置 `failClosed: false` 作为第二层兜底。
+**自锁防护（fail-open）**：Hook 入口脚本（`gate-dev-workflow`、`gate-dev-shell`、`gate-toolchain-install`、`gate-stop-workflow`、`gate-role-sequence`、`gate-subagent-track`）对 `workflow-gate-lib.mjs` 使用动态 `import` + `try/catch`，且执行期逻辑同样包裹在 `try/catch` 中；lib 不可加载或运行期出现未预期异常时 **fail-open 放行**（`gate-stop-workflow` 语义为不注入 followup）并打印 stderr 告警，同时尽量将异常写入活跃 `process.md` 的 `## 门禁异常事件` 并将 `blocking: true`（`recordFailOpenEvent`；cancelled 流程或无法写盘时仅保留 stderr），避免门禁自身损坏导致全流程硬死锁，同时防止静默绕过。策略性 `deny` 不受影响。`gate-role-sequence` 额外在 `hooks.json` 中配置 `failClosed: false`，与脚本内 fail-open 同向（二者都选择放行）。
+
+> **`failClosed: true` 实际不生效（已知局限，勿误以为有双层保护）**：Cursor 文档定义 `failClosed` 的触发条件为「hook 失败」——崩溃、超时、输出非法 JSON。本框架的入口脚本自行 `try/catch` 并以退出码 0 输出合法的 `{"permission":"allow"}`，属「Hook 成功，按其 JSON 输出执行」，**不构成失败**，因此 `hooks.json` 中为 `gate-dev-workflow` / `gate-dev-shell` / `gate-toolchain-install` 配置的 `failClosed: true` 在当前实现下**永远不会被触发**。换言之，判定期异常的最终语义完全由脚本自己的 fail-open 决定。这是刻意的防死锁取舍，但代价是：**任何能让判定逻辑抛异常的 `process.md` 都能打开门禁**，而 `process.md` 恰由被约束方书写。若要收紧，应区分「lib 加载失败」（继续 fail-open）与「判定期异常」（改为 `deny` 或让其真的失败以激活 `failClosed`）。
 
 **门禁能力边界（须知）**：
 
-- Hook 对**源码 / 构建产物 / 根目录敏感产物 / `.cursor/scripts|agents|hooks/**` 三目录 / `docs` 下角色成果物（需求/设计/质量/测试/`process.md`）/ 受门禁 Shell 命令 / Task 发起前的角色前置成果物（R13）**做确定性拦截。`.cursor/hooks.json`、`.cursor/harness.config.json` **不纳入机制门禁**，其变更治理由 `AGENTS.md` §5.1 R5/R8 **文字约束**覆盖。
-- **R5 调用者身份（部分机械化）**：①顶层 vs 子代理——`subagentStart`（`gate-subagent-track`）记录顶层 `conversation_id`，`gate-dev-workflow` / `gate-dev-shell` 用 `isRootConversationCaller` 拒绝顶层亲自写受门禁路径或跑受门禁 Shell；②角色↔路径——`gate-role-sequence` 在 Task 放行时 `recordDispatchedRole`，写入期 `checkRolePathPermission` 校验路径期望角色与「进度正在执行 / 分派计划 / 待派发 / 最近派发」是否匹配（源码收紧为须 DE 活跃）。**局限（坦诚披露）**：Cursor 当前子代理 hooks 无可靠 parent 回链，故无法用子代理 `conversation_id` 直接映射角色；首次 Task 前或字段缺失时 identity 判据 fail-open（仍受分派计划等既有门禁约束）；「子代理是否越权写了分派范围外细节」的语义部分仍靠文字 + §5.15 自检。
+- Hook 对**源码 / 构建产物 / 根目录敏感产物 / `.cursor/scripts|agents|hooks/**` 三目录 / `docs` 下角色成果物（需求/设计/质量/测试/`process.md`）/ 受门禁 Shell 命令 / Task 发起前的角色前置成果物（R13）**做确定性拦截。`.cursor/hooks.json`、`.cursor/harness.config.json` 不走 DE 源码门禁，但**已纳入 R29 门禁自治资产分级**（写入须人工批准，见 §8.5），不再仅由文字约束覆盖。
+- **R5 调用者身份（部分机械化）**：①顶层 vs 子代理——`subagentStart`（`gate-subagent-track`）记录顶层 `conversation_id`，`gate-dev-workflow` / `gate-dev-shell` 用 `isRootConversationCaller` 拒绝顶层亲自写受门禁路径或跑受门禁 Shell；②**R21** 角色↔路径——`gate-role-sequence` 在 Task 放行时 `recordDispatchedRole`，写入期 `checkRolePathPermission` 校验路径期望角色与「进度正在执行 / 分派计划 / 待派发 / 最近派发」是否匹配：**产品源码**（`isGatedDevPath` 且非 `e2e/**`）收紧为须 DE 活跃，且**最近派发角色若为 TE/QE 等非 DE 则直接 deny**（不因进度表残留 DE 行而放行）；**R23**：**`e2e/**`** 纳入 `isGatedDevPath`，期望角色为 `test-engineer`（非 TE 含 DE 默认 deny），不走 DE 分派计划门禁；③**R22** TE 冒烟（替代启动）——最近派发为 `test-engineer` 时，`gate-dev-shell` 经 `checkTeAlternativeE2eStartup` 拒绝 `E2E_WEB_SERVER_COMMAND=` / `npx vite-node`+e2e 等替代启动（除非 `e2eAlternativeStartup:"allowed"` + 用户确认「允许非 dist 启动」双要素）。文字约束（R21/R22 语义补充，语义不可机械化）：TE 禁止改产品源码、禁止用替代启动掩盖生产冒烟失败；**R24**（纯文字约束，语义不可机械化）：TE 禁止为测绿随意改已生成用例（见 `test-engineer.md`）。**局限（坦诚披露）**：Cursor 当前子代理 hooks 无可靠 parent 回链，故无法用子代理 `conversation_id` 直接映射角色；首次 Task 前或字段缺失时 identity 判据 fail-open（仍受分派计划等既有门禁约束）；「子代理是否越权写了分派范围外细节 / 用例变更是否真属用例缺陷 / 冒烟是否真实执行」的语义部分仍靠文字 + §5.15 自检。
 - **批次 + 最终 E2E**（`batchE2ePassed` / `finalE2ePassed`）；**R15 lint**；**R16 静态扫描**；**R14 接口测试报告**；**R17 存储对账**（含适用行 `test-results/recon/*.json` 证据文件）；**R18 设计审核**（含摘录最短长度、设计原文存在性、**设计落点 §N 章节窗口**、跨行去重）。**目标达成性 / 验收标准与摘录的深层语义对齐 / 对账查验语义 / SRP 等**仍不可机械判定，由 RR/QE/PM 文字审查兜底。R18 设计落点/任务包交叉校验仍为弱匹配；摘录「是否与验收标准语义相关」仍靠人工核验——机读只证明文字真实、定位正确、不过度雷同。
 - **`test-results/` 受控运行产物例外**：E2E / lint / 静态扫描 / QE 留痕 / **R17 对账证据（`test-results/recon/*.json`）** / Playwright trace 等由运行器或测试工程师进程内写盘，**不触发** `gate-dev-workflow`；`.gitignore` 已忽略 `test-results/`。
-- Shell 门禁为正则匹配，属「尽力而为」：可绕过手段无法穷尽拦截。子 agent 不得主动利用（`AGENTS.md` §5.16）。
+- Shell 门禁为正则匹配，属「尽力而为」：可绕过手段无法穷尽拦截。**R28** 已把「写文件类命令」纳入与 Write 同等判据（见 §8.5），但仍不可穷尽；子 agent 不得主动利用（`AGENTS.md` §5.16）。
 - **hotfix 折叠通道下 R14/R17 无硬门禁的部分缓解**：见 `gate-chain.md` R9 脚注第 4 条（非阻塞软性提醒）。
+
+### 8.5 审核加固项（R28–R31 与 R5/R6 加强）
+
+本节对应一次外部审核中**实测可复现**的绕过链与静默失效。每条都配有回归用例：单元级见
+`.cursor/scripts/tests/selftest/r28-r31-hardening.mjs`，Hook 端到端见
+`.cursor/scripts/tests/scenarios/hardening.mjs`。
+
+#### R28：Shell 侧写文件门禁
+
+**问题**：`gate-dev-shell` 原先只匹配 `gatedShellPatterns`（包管理/脚手架），未命中即
+`allow()` 早退——连 R5 身份判定都在其后。实测 `Set-Content src/app.ts`、`echo x > src/app.ts`、
+`node -e "...writeFileSync..."`、`cp`、`curl -o`、`sed -i`、`git apply`、`rm -rf src/` 等
+写文件命令 **100% 放行**，即 R5/R3/R9/R21/R23 仅覆盖 Write 类工具。
+
+**判据**（`classifyShellWriteIntent`，执行权威为 Hook/脚本）：
+
+| 分类 | 判定 | 裁决 |
+| ---- | ---- | ---- |
+| `targets` 非空 | 命令写入的目标可静态解析且命中受门禁路径 | 套用与 Write **完全相同**的判据：R5 顶层身份 → R5 角色↔路径 → （非 `e2e/**`）分派计划/R3/R9/阻塞 |
+| `selfGoverned` 非空 | 目标为门禁自治资产 | 按 R29 分级（`deny` / `ask`） |
+| `opaqueWrite` | 内联解释器（`node -e`/`python -c`…）含写文件语义但目标不可解析 | `deny`，要求改用 Write 类工具以便门禁裁决 |
+| `opaqueWorktree` | `git apply` / `reset --hard` / `stash pop` 等可任意改写工作树 | `ask`（交人类判断） |
+| 其余 | 只读 / 构建 / 框架运行器 / 写非门禁路径 | 沿用既有逻辑 |
+
+**能力边界**：仍是正则「尽力而为」，目标是把随手绕过的成本从 0 提高到「必须刻意构造」，
+不声称不可绕过。框架自带运行器（`e2e-run` / `lint-run` / `static-scan-run` / `qe-run` /
+`bootstrap-docs` / `gate-*`）显式豁免，避免自锁。
+
+#### R29：门禁自治资产
+
+**问题**：`hooks.json`、`harness.config.json` 与三个运行时标记原先全在
+`dotCursorExemptPatterns` 中，等于「被约束方可自由改写约束自身」。实测一步可达：
+伪造 `.dispatched-roles.json` 即获任意角色身份（deny → allow）；自写
+`.toolchain-install-approved.json` 即自签安装授权（ask → allow）且**一份凭证泛用于任意
+安装命令**；把 `qe.commands.lint` 设为 `exit 0` 即令 R15 空转（`gatePassed=true`）；
+清空 `sourceDirs` 即令 R6 全面失效。这使 R12「只可加强」失去机械基础。
+
+| 分级 | 路径 | 裁决 | 理由与解法 |
+| ---- | ---- | ---- | ---- |
+| `runtime-marker` | `.cursor/hooks/.root-conversation-id.json`、`.cursor/hooks/.dispatched-roles.json` | **deny** | 只应由 Hook 进程自身落盘；代理写入即等于自签身份。解法：走正常 Task 派发让 Hook 自行落盘 |
+| `approval-marker` | `.cursor/hooks/.toolchain-install-approved.json` | **deny** | 代表「用户已批准」，代理写入即自签授权。解法：直接执行安装命令，由 `gate-toolchain-install` 在 `beforeShellExecution` 上 `ask` 请用户批准；如需批量预授权，由**用户本人**创建该凭证 |
+| `gate-config` | `.cursor/hooks.json`、`.cursor/harness.config.json`、`AGENTS.md`、`.cursor/harness/spec/**.md` | **deny** | 门禁强度旋钮与权威文本；「是否放宽门禁」不能由被约束方自行决定。解法：代理呈现 diff/理由，由**用户本人**编辑 |
+| 角色门禁 | `.cursor/harness-state.json` | 期望 `project-manager` | 它决定所有门禁读哪一份 `process.md`；保留 PM bootstrap 窗口 |
+
+**为什么一律 `deny` 而不是 `ask`（重要，勿回改）**：Cursor 官方 Hooks 文档明确写明
+`preToolUse` 的 `permission: "ask"` 是「accepted by the schema but **not enforced** for
+`preToolUse` today」——即写文件通道上返回 `ask` **不会**弹出用户批准，实际行为未定义。
+若在此处依赖 `ask`，保护会**静默退化**，正是本次审核要消除的失效模式。`beforeShellExecution`
+通道确实支持 `ask`（`gate-toolchain-install` 即用它），但 R29 在 Shell 通道也刻意用 `deny`：
+否则「Write 被拒 → 改用 Shell → 用户顺手点批准」会成为标准绕过路径，与 `AGENTS.md` §5.16 冲突。
+
+**工具链授权加强**：`commandHash` 由「可选」改为**必需**，且须 `userConfirmed: true` 与
+有效时间戳（`expiresAt` 或 `approvedAt`）。历史行为下一份无 `commandHash` 的凭证可放行
+任意安装命令，现要求凭证与本次命令一一绑定。凭证本身已禁止代理创建（见上表），
+故常态路径是每条系统级安装命令都经 `gate-toolchain-install` 的 `ask` 由用户批准。
+
+**残留缺口（坦诚披露）**：`.cursor/templates/**` 与 `.cursor/rules/**` 仍为豁免——
+前者不被 Hook 直接读取（门禁读 `docs/` 成果物），后者仅为提醒，风险较低；但被污染的模板
+会向下游传播错误结构，仍需人审。
+
+#### R30：门禁输入编码鲁棒性
+
+**问题**：所有门禁读盘原先硬编码 `fs.readFileSync(p, 'utf8')`。实测**一个 UTF-8 BOM 就能
+解冻 R10 的「不可逆冻结」**——BOM 顶开 `^---`，`parseProcessFrontmatter` 整体失配，
+`cancelled` / `blocking` / `workflow_mode` / `iterationType` 全部静默丢失；UTF-16LE 更严重
+（连 PM Task 也被放行）。触发路径完全现实：PowerShell 5.1 的 `>` 与 `Out-File` 默认输出
+UTF-16LE，`Set-Content -Encoding UTF8` 与 Windows 记事本产出 UTF-8 BOM，而本规约示例命令
+以 PowerShell 为主。
+
+**判据**：统一走 `readTextFileSafe` / `readJsonFileSafe`（`decodeTextBuffer`）——识别
+UTF-8 BOM、UTF-16LE/BE BOM，并按「0x00 字节的奇偶优势比」探测无 BOM 的 UTF-16；
+`parseProcessFrontmatter` 另行防御性剥离前导 BOM。探测**不得**要求「另一侧严格为 0」：
+中日韩文本中 U+xx00 形式的字符（如「一」U+4E00）会在另一侧贡献 0x00，严格判据会整份漏判。
+
+#### R31：回退计数上限机械化
+
+**问题**：`rollback.md` 声称开发回退由「stop Hook 与 `## 回退计数` 双重约束」，但
+`gate-stop-workflow` 从不读取该章节——文档强于实现，按 R12 须补齐实现。
+
+**判据**：`checkRollbackLimit` 解析 `## 回退计数` 的 `| 对象类型 | 对象编号 | 回退次数 |` 表；
+任一对象 `回退次数 > rollback.limit`（默认 3）即由 stop 门禁注入 followup，要求 PM 置
+`blocking: true`、写明反复回退根因并 `AskQuestion` 请用户决策。置于「全流程闭环放行」判据
+**之后**——已跑完且全绿的流程不因历史回退次数被倒扣；空表/缺章节/非数字占位不误判。
+
+#### R5 加强：身份基准 TTL 自愈
+
+**问题**：`recordRootConversationId` 原先「文件存在即永不覆盖」，本意是防嵌套子代理误写基准，
+但作用域被放大成「整个仓库永久只记一次」。实测后果：基准一旦被遗留夹具值或跨会话陈旧值占据，
+`isRootConversationCaller` 恒 false，**顶层代写拦截永久静默失效**（审核时该仓库工作树即处于此态）。
+
+**判据**：区分两个谓词——「可被覆盖（stale，无时间戳或超 TTL）」用于**自愈**决策；
+「已确定过期（expired，有合法时间戳且超 TTL）」用于**身份判定**决策。TTL 内不覆盖（保留防嵌套语义），
+超 TTL 由新会话首个 `subagentStart` 覆盖。降级态不再静默：`inspectIdentityBaseline` 判定为
+`baseline-missing` / `baseline-expired` 时写 stderr 告警并在 `process.md` 留一次性
+**非阻塞**提醒（`recordIdentityBaselineNotice`，幂等、cancelled 流程不写）。
+
+**保留的 fail-open**：基准缺失时仍放行（避免 `subagentStart` 不可用导致硬死锁），
+但已从「静默」变为「有告警 + 有留痕」。
+
+#### R6 加强：代码扩展名默认受门禁
+
+**问题**：路径门禁原先是 `sourceDirs` 目录名**白名单**，实测 14 类主流布局完全不受保护：
+`Sources/`（SwiftPM）、`myapp/`（Python 根包）、`MyApp/`（.NET）、`functions/`（Serverless）、
+`R/`、`Modules/`、`assets/`、`charts/`、`ansible/`、根目录 `main.py` / `index.js` 等——
+与「跨技术栈通用」的定位直接冲突。原缓解手段（架构师在 `gated-artifacts.json` 声明
+`extraSourceDirs`）既无机械校验，又晚于 T0 阶段的首批代码写入。
+
+**判据**：改为**黑名单**——凡 `CODE_EXTENSIONS` 内的扩展名一律受门禁，除非位于
+`gatedPaths.extensionGateExemptDirs`（依赖/构建产物/工具目录，如 `node_modules`、`dist`、
+`target`、`.venv`、`test-results` 等）。`.cursor/`、`docs/`、`e2e/` 分支优先级不变。

@@ -1,28 +1,18 @@
 /**
  * 场景自测共享脚手架：fixture 工厂、Hook spawn、check()、E2E/lint/scan 快照。
- */
-/**
- * 场景级门禁回归测试（框架维护用，不参与宿主项目开发）。
  *
- * 由 `eval/` 下的一次性评估探针（run-gate.mjs / e2e-compute.mjs / probe-blocking.mjs）
- * 沉淀而来，转为可重复运行的常驻回归套件：
- *   - 与 `gate-selftest.mjs`（库函数单元级回归）互补，本套件是**端到端**回归——
- *     真正 spawn 框架自己的 5 个 Hook 入口脚本
- *     （gate-role-sequence / gate-dev-workflow / gate-dev-shell /
- *      gate-toolchain-install / gate-stop-workflow），读取其 allow/deny/ask/followup。
- *   - E2E 门禁结果用框架自己的 `e2e-run-lib.mjs`（parseChromiumResults + computeGateResult）
- *     真实计算后写入 `test-results/e2e/`（运行前快照、运行后还原，避免污染宿主运行时产物）。
- *   - 全程使用**隔离 fixture**（写在 `test-results/.gate-scenarios/` 下，经 HARNESS_PROCESS_PATH /
- *     HARNESS_GATED_ARTIFACTS_PATH 指向），不依赖、不改动宿主项目的 `docs/` 成果物。
+ * 框架维护用，不参与宿主项目开发。由历史 `eval/` 探针沉淀为常驻端到端回归：
+ *   - 与 `gate-selftest.mjs`（库函数单元级）互补——本套件真正 spawn Hook 入口，
+ *     读取 allow/deny/ask/followup；
+ *   - E2E 用 `e2e-run-lib.mjs` 真实计算后写入 `test-results/e2e/`（运行前后快照还原）；
+ *   - 隔离 fixture 在 `test-results/.gate-scenarios/`，经 HARNESS_PROCESS_PATH 等指向。
  *
- * 覆盖场景矩阵：Greenfield(full) / Feature(full) / Hotfix(R11 折叠) / R15 编程规范 lint 门禁 /
- * R16 静态代码质量门禁（重复代码+安全扫描）/ R17 业务数据存储对账 / R18 设计审核可修复性与需求覆盖 /
- * 对抗健壮性 / Finding #1（出厂模板阻塞误判）端到端回归。
+ * 覆盖：Greenfield / Feature / Hotfix(R11) / R15 lint / R16 静态扫描 / R17 对账 /
+ * R18 设计审核 / 对抗 / R5 会话 / Finding#1 / TE 冒烟(R22) / 加固(R28–R31)。
  *
  * 用法：
- *   node .trae/scripts/gate-scenarios.mjs           # 运行全部场景
- *   node .trae/scripts/gate-scenarios.mjs --verbose # 附带打印每步 deny/ask/followup 首行原因
- * 退出码非 0 即有场景回归失败，供修改 Hook/脚本/模板后回归验证。
+ *   node .trae/scripts/gate-scenarios.mjs
+ *   node .trae/scripts/gate-scenarios.mjs --verbose
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -93,6 +83,29 @@ export const DISPATCH_SECTION = [
   '| ---- | ---- |',
   '| development-engineer | T0-1 |',
 ].join('\n');
+
+/**
+ * 生成含指定角色的分派计划段（R32 场景测试用：被派发角色须在 PM 分派计划中）。
+ * @param {string[]} roles 角色 slug 数组（如 ['system-architect']）
+ * @returns {string}
+ */
+export function dispatchWithRoles(roles) {
+  const planRows = roles.map((r) => `| T0-1 | ${r} | 串行 | 待派 |`).join('\n');
+  const pendingRows = roles.map((r) => `| ${r} | T0-1 |`).join('\n');
+  return [
+    '## 当前分派计划',
+    '',
+    '| 任务包编号 | 分派角色 | 并行/串行 | 状态 |',
+    '| ---------- | -------- | --------- | ---- |',
+    planRows,
+    '',
+    '## 待派发角色列表',
+    '',
+    '| 角色 | 说明 |',
+    '| ---- | ---- |',
+    pendingRows,
+  ].join('\n');
+}
 
 export const EMPTY_DISPATCH_SECTION = [
   '## 当前分派计划',
@@ -241,7 +254,7 @@ export function progressSection(rows = []) {
   ].join('\n');
 }
 
-export function greenfieldReady(progressRows = []) {
+export function greenfieldReady(progressRows = [], dispatchSection = DISPATCH_SECTION) {
   return [
     '---',
     'phase: development',
@@ -257,7 +270,7 @@ export function greenfieldReady(progressRows = []) {
     '',
     CONFIRM_SECTION,
     '',
-    DISPATCH_SECTION,
+    dispatchSection,
     '',
     progressSection(progressRows),
     '',
@@ -514,19 +527,21 @@ export function writeFixture(name, files) {
   return root;
 }
 
-export function buildPayload(hook, { role, filePath, command, conversationId }) {
+export function buildPayload(hook, { role, filePath, command, conversationId, agentId }) {
   let payload;
   if (hook === 'role') payload = { tool_name: 'Task', tool_input: { subagent_type: role } };
   else if (hook === 'write') payload = { tool_name: 'Write', tool_input: { path: filePath } };
   else if (hook === 'shell' || hook === 'toolchain') payload = { command, tool_input: { command } };
   else payload = {};
-  // R5 机械化补强测试用：模拟 Trae 真实 payload 里的 session_id 字段
-  // （见 workflow-gate-lib.mjs 的 isRootConversationCaller）；未传时保持既有行为不变。
+  // R5 身份判定（2026-07-29 修复）：agent_id 是 Trae PreToolUse stdin 的标准字段，
+  // solo_agent=顶层（deny），其他=子代理（放行）。未传时 agent_id 缺失 -> fail-open。
+  if (agentId !== undefined) payload.agent_id = agentId;
+  // 保留 session_id 供向后兼容测试（生产门禁已改用 agent_id）
   if (conversationId !== undefined) payload.session_id = conversationId;
   return payload;
 }
 
-export function runHook({ hook, role, filePath, command, processPath, gatedPath, conversationId }) {
+export function runHook({ hook, role, filePath, command, processPath, gatedPath, conversationId, agentId }) {
   const env = { ...process.env };
   delete env.HARNESS_PROCESS_PATH;
   delete env.HARNESS_GATED_ARTIFACTS_PATH;
@@ -535,7 +550,7 @@ export function runHook({ hook, role, filePath, command, processPath, gatedPath,
 
   const res = spawnSync('node', [HOOK_FILES[hook]], {
     cwd: PROJECT_ROOT,
-    input: JSON.stringify(buildPayload(hook, { role, filePath, command, conversationId })),
+    input: JSON.stringify(buildPayload(hook, { role, filePath, command, conversationId, agentId })),
     encoding: 'utf8',
     env,
   });

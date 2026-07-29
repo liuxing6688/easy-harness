@@ -1,3 +1,9 @@
+/**
+ * R14：批次接口测试报告机读与 apiTestApplicability 双要素豁免。
+ *
+ * 入口：node .cursor/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
 import {
   test, fixtureProcess, cleanup, assert, path, fs,
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,

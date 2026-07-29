@@ -1,5 +1,8 @@
-﻿/**
- * 场景套件：lintGateScenarios
+/**
+ * 场景套件：lintGateScenarios（L1–L4）
+ * 覆盖 R15：lint 未通过时 stop/派发 TE 拦截，以及双要素豁免放行。
+ *
+ * 入口：node .trae/scripts/gate-scenarios.mjs；脚手架：./_harness.mjs
  */
 import {
   REQ_SPEC,
@@ -21,7 +24,8 @@ import {
   path,
   fs,
   QE_DONE_ROWS,
-  QUALITY_REPORT_CLEAN
+  QUALITY_REPORT_CLEAN,
+  dispatchWithRoles
 } from './_harness.mjs';
 
 export function lintGateScenarios() {
@@ -68,7 +72,7 @@ export function lintGateScenarios() {
   };
 
   const roleLintFail = writeFixture('lint-role-fail', {
-    'docs/process/process.md': greenfieldReady(QE_DONE_ROWS),
+    'docs/process/process.md': greenfieldReady(QE_DONE_ROWS, dispatchWithRoles(['test-engineer'])),
     ...roleBase,
   });
   const roleFailProc = relToProject(path.join(roleLintFail, 'docs/process/process.md'));
@@ -80,7 +84,7 @@ export function lintGateScenarios() {
   });
 
   const roleLintPass = writeFixture('lint-role-pass', {
-    'docs/process/process.md': greenfieldReady(QE_DONE_ROWS),
+    'docs/process/process.md': greenfieldReady(QE_DONE_ROWS, dispatchWithRoles(['test-engineer'])),
     ...roleBase,
   });
   const rolePassProc = relToProject(path.join(roleLintPass, 'docs/process/process.md'));

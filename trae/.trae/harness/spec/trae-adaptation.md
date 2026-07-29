@@ -54,7 +54,8 @@ Trae 原生 PreToolUse / PostToolUse 的 `tool_name` 采用标准化命名（见
 | ------- | ---------- | ------------- | ---- |
 | `Write\|Edit` | Write / Edit | `gate-dev-workflow.mjs` | R5 顶层写入门禁 + 角色路径校验 |
 | `RunCommand` | 终端命令 | `gate-dev-shell.mjs` + `gate-toolchain-install.mjs` | Shell 命令门禁 + 工具链安装批准 |
-| `Task` | 子任务分派 | `gate-role-sequence.mjs` | R13 角色派发前置校验 + R5 角色记录 |
+| `Task` | 子任务分派 | `gate-role-sequence.mjs` | R13 角色派发前置校验 + R5 角色记录（**Trae 实测不路由**：此 matcher 不触发；R13/角色记录由 `gate-r13-subagent`（`matcher:"*"`）自动承担，见 §0.6 与 `mechanical-gates.md` §8.4） |
+| `*`（全部工具） | 子代理任意工具调用 | `gate-r13-subagent.mjs` | **R13 自动门禁（Trae 适配）**：子代理首次工具调用时基于 `agent_id` 自动执行 R13 校验 + `recordDispatchedRole`；短路 `solo_agent`/非门禁角色 |
 | Stop 事件 | - | `gate-stop-workflow.mjs` | R9 / R14–R17 收尾门禁 |
 | SessionStart 事件 | - | `gate-subagent-track.mjs` | R5 顶层会话 ID 记录 |
 
@@ -71,8 +72,8 @@ Cursor 有 `subagentStart` 事件，可在子代理创建时记录其 `conversat
 
 - **顶层会话 ID 记录**：用 `SessionStart` 事件替代。首个 SessionStart（顶层会话创建时）触发，记录 `session_id` 为根会话 ID；`recordRootConversationId` 只写入一次（不覆盖），后续子代理的 SessionStart 不会覆盖已记录的根 ID。
 - **跨会话状态隔离（P2-2/P2-3 修复）**：Trae `$TRAE_ENV_FILE`（SessionStart 事件注入的环境变量文件）作为会话级状态共享通道。`gate-subagent-track.mjs` 在 SessionStart 同时调用 `writeRootSessionIdToEnvFile(sessionId)` 将 `ROOT_SESSION_ID` 追加写入 `$TRAE_ENV_FILE`，与持久化文件（`.trae/harness-state.json` 的 `rootConversationId`）形成双源；`readRootConversationId` 采用「env var 优先 + 持久化文件兜底」策略——新会话的 env var 覆盖旧持久化值，消除跨会话陈旧状态导致 R5 误判为 fail-open 的风险。非 SessionStart 上下文（如手动跑测试，无 `$TRAE_ENV_FILE`）仍回退至持久化文件，行为与改造前兼容。
-- **身份字段名**：Trae stdin 通用字段为 `session_id`（非 `conversation_id`），`isRootConversationCaller` 读取 `session_id` 与根 ID 比对。
-- **角色记录**：仍通过 `PreToolUse` + `Task` matcher 在 `gate-role-sequence.mjs` 中调用 `recordDispatchedRole`，不受 SubagentStart 缺失影响。
+- **身份字段名**：Trae PreToolUse stdin 含 `agent_id` 字段（实测：`solo_agent`=顶层，角色名=子代理），`isTopLevelAgent(agent_id)` 据此判定顶层 vs 子代理。历史实现用 `session_id` 比对根 ID（`isRootConversationCaller`），但实测发现子代理与顶层共享 `session_id`，该判据无法区分--已改用 `agent_id`（2026-07-29 修复）。`session_id` 仍由 SessionStart 记录，供跨会话隔离使用。
+- **角色记录**：Trae 实测不把 `Task` 路由进 PreToolUse（2026-07-29 验证），故原生 `Task` matcher 不触发 `gate-role-sequence.mjs`。`recordDispatchedRole` **经 `gate-r13-subagent.mjs`（`matcher:"*"`）自动生效**--子代理首次工具调用时，该 Hook 从 `agent_id` 识别角色并记录，不再依赖手动 `gate-check role`。手动 `gate-check role` 仍作为兜底（`alwaysApply` 规则强制），但不再是唯一路径。详见 `mechanical-gates.md` §8.4。
 
 语义等价：顶层代理亲自执行受门禁操作时一律拒绝，必须通过 Task 派发的子代理执行。
 

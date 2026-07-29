@@ -24,6 +24,7 @@ pending_roles: []
 
 > 技术选型确认示例：`| 技术选型 | YYYY-MM-DD | 确认采用 …；来源 tech-stack-options.md 方案 A |`（R18 机读：确认项或摘要须含「技术选型/技术栈」且含确认语义）。
 > hotfix 无 P0 影响示例：`| hotfix影响面 | YYYY-MM-DD | 已比对 requirement-list.md 全部 P0（R-001~R-xxx），本次修复仅涉及…，不改变任何 P0 行为 |`（R9 机读：声明 `hotfix_p0_impact: none` 时确认项或摘要须含「hotfix影响面」）。
+> 测试收尾已知缺陷示例：`| 测试收尾已知缺陷 | YYYY-MM-DD | 标注「需要用户确认：接受带已知缺陷交付」由顶层 Agent 代问；未关闭高严重/须 DE 修复项：… |`（测试报告有未关闭高严重或「须 DE 修复」时，PM 收尾前须在返回结果中标注待确认问题由顶层 Agent 代为询问留痕，禁止静默非阻塞收尾）。
 
 ## 当前分派计划
 

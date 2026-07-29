@@ -1,3 +1,9 @@
+/**
+ * R5：顶层会话 id 基准、TTL 自愈、身份健康度、isRootConversationCaller。
+ *
+ * 入口：node .cursor/scripts/gate-selftest.mjs
+ * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
+ */
 import {
   test, fixtureProcess, cleanup, assert, path, fs,
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,
@@ -168,14 +174,98 @@ test('R5: QE 活跃时拒绝写源码（须 DE）', () => {
   fixtureProcess(content);
   const r = checkRolePathPermission('src/index.ts');
   assert.equal(r.ok, false);
-  // forSource 收紧后活跃集不含 DE → no-active-role；若仅有非 DE 活跃则为 role-path-mismatch
+  // 最近派发为 QE → 直接 non-de-dispatched-denied；无派发记录时 forSource 收紧后为 no-active-role / role-path-mismatch
   assert.ok(
-    r.reason === 'no-active-role' || r.reason === 'role-path-mismatch',
+    r.reason === 'non-de-dispatched-denied' ||
+      r.reason === 'no-active-role' ||
+      r.reason === 'role-path-mismatch',
     `unexpected reason: ${r.reason}`,
+  );
+});
+test('R5: 最近派发 TE 时即使进度残留 DE 正在执行也拒绝写产品源码', () => {
+  clearDispatchedRoles();
+  recordDispatchedRole('development-engineer');
+  recordDispatchedRole('test-engineer');
+  const content = [
+    '---',
+    'workflow_mode: full',
+    '---',
+    '',
+    '## 当前分派计划',
+    '',
+    '| 任务包编号 | 分派角色 | 并行/串行 | 状态 |',
+    '| --- | --- | --- | --- |',
+    '| T0-1 | development-engineer | 串行 | 进行中 |',
+    '',
+    '## 进度列表',
+    '',
+    '| 角色/开发线 | 任务名称 | 状态 | 说明 |',
+    '| --- | --- | --- | --- |',
+    '| 开发工程师 | T0-1 | 正在执行 | |',
+    '| 测试工程师 | 批次集成测试 T0-1 | 正在执行 | |',
+    '',
+  ].join('\n');
+  fixtureProcess(content);
+  const r = checkRolePathPermission('web/src/app/App.tsx');
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'non-de-dispatched-denied');
+});
+test('R5: 最近派发 TE 时可写 e2e，不可写产品源码；DE 活跃时不可写 e2e', () => {
+  clearDispatchedRoles();
+  recordDispatchedRole('test-engineer');
+  const teContent = [
+    '---',
+    'workflow_mode: full',
+    '---',
+    '',
+    '## 当前分派计划',
+    '',
+    '| 任务包编号 | 分派角色 | 并行/串行 | 状态 |',
+    '| --- | --- | --- | --- |',
+    '| T0-1 | test-engineer | 串行 | 批次测试 |',
+    '',
+    '## 进度列表',
+    '',
+    '| 角色/开发线 | 任务名称 | 状态 | 说明 |',
+    '| --- | --- | --- | --- |',
+    '| 测试工程师 | 批次集成测试 T0-1 | 正在执行 | |',
+    '',
+  ].join('\n');
+  fixtureProcess(teContent);
+  assert.equal(checkRolePathPermission('e2e/specs/batch.spec.ts').ok, true);
+  assert.equal(checkRolePathPermission('src/index.ts').ok, false);
+
+  clearDispatchedRoles();
+  recordDispatchedRole('development-engineer');
+  const deContent = [
+    '---',
+    'workflow_mode: full',
+    '---',
+    '',
+    '## 当前分派计划',
+    '',
+    '| 任务包编号 | 分派角色 | 并行/串行 | 状态 |',
+    '| --- | --- | --- | --- |',
+    '| T0-1 | development-engineer | 串行 | 进行中 |',
+    '',
+    '## 进度列表',
+    '',
+    '| 角色/开发线 | 任务名称 | 状态 | 说明 |',
+    '| --- | --- | --- | --- |',
+    '| 开发工程师 | T0-1 | 正在执行 | |',
+    '',
+  ].join('\n');
+  fixtureProcess(deContent);
+  const deE2e = checkRolePathPermission('e2e/specs/batch.spec.ts');
+  assert.equal(deE2e.ok, false);
+  assert.ok(
+    deE2e.reason === 'role-path-mismatch' || deE2e.reason === 'no-active-role',
+    `unexpected reason: ${deE2e.reason}`,
   );
 });
 test('R5: DE 正在执行时允许写源码', () => {
   clearDispatchedRoles();
+  recordDispatchedRole('development-engineer');
   const content = [
     '---',
     'workflow_mode: full',

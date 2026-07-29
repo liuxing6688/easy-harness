@@ -1,14 +1,14 @@
 /**
  * lint-run.mjs 的纯函数库：跨技术栈 lint 命令解析与 gatePassed 判据计算。
- * 与 workflow-gate-lib.mjs 独立（不引入运行时状态依赖），便于单测覆盖。
  *
- * 编程规范门禁（R15，.trae/harness/spec/mechanical-gates.md §8.2 唯一权威定义）：QE 阶段须实际运行 lint 且
- * 退出码为 0，机读结果落盘 test-results/qe/.lint-result.json（gatePassed 字段），
- * 判据结构与 E2E 门禁（e2e-run-lib.mjs）同构。`gatePassed` 仅在「有 lint 命令且
- * 退出码为 0」时为 true；无可用 lint 命令时 gatePassed=false（reason=no-lint-command），
- * 须由 harness.config.json → qe.commands.lint 覆盖、或走「无 linter 适用性豁免」
- * （架构师声明 lintApplicability:"n/a" + 用户确认）；detail-design-spec §5 仅为文档留痕，
- * 不作为 Hook 输入。无默认栈不得静默放过。
+ * 与 workflow-gate-lib.mjs 独立（不引入运行时状态依赖），便于单测覆盖。
+ * 运行器入口：`./lint-run.mjs`；Hook 消费产物：`readLintResult()` → stop / R13。
+ *
+ * R15（mechanical-gates.md §8.2）：QE 阶段须实际运行 lint 且退出码为 0，
+ * 机读结果落盘 test-results/qe/.lint-result.json。
+ * gatePassed 仅在「有 lint 命令且退出码为 0」时为 true；无命令时 reason=no-lint-command，
+ * 须配置覆盖或走双要素豁免（lintApplicability:"n/a" + 用户确认）。
+ * detail-design-spec §5 仅为文档留痕，不作为 Hook 输入。
  */
 
 /** 各技术栈默认 lint 命令（与 qe-run.mjs 保持一致的取值口径；空串表示该栈默认无 lint） */

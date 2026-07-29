@@ -103,7 +103,7 @@ disable-model-invocation: true
 
 ### 2.2 审核门禁
 
-使用 `AskQuestion` 让用户对每条建议勾选：**批准 / 修订后批准 / 驳回**，并可补充约束。
+使用 `AskUserQuestion` 让用户对每条建议勾选：**批准 / 修订后批准 / 驳回**，并可补充约束。
 
 将审核结果追加到复盘报告：
 

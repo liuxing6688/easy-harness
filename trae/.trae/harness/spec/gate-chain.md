@@ -13,19 +13,21 @@
 | -------- | ------------------------ | ------------ |
 | 需求分析师 | 项目经理已记录用户目标于 `process.md` | 无阻塞 |
 | 系统架构师 | `requirement-spec.md`（含结构完整、关联需求与 §7 追溯的「隐性需求确认记录」，R19 机读）、`requirement-list.md`；用户已确认需求摘要 | 无阻塞 |
-| 需求评审专家 | `detail-design-spec.md`、`develop-task-list.md`；用户已确认技术选型（`## 用户确认记录` 含技术选型/技术栈确认行，R18 机读） | 无阻塞 |
+| 需求评审专家 | `detail-design-spec.md`、`develop-task-list.md`；用户已确认技术选型（须由系统架构师在返回结果中标注「需要用户确认：[候选方案+推荐标注]」由顶层 Agent 用 `AskUserQuestion` 代为确认，R26，Trae 适配：Subagent 不含 `AskUserQuestion` 工具；`## 用户确认记录` 含技术选型/技术栈确认行，R18 机读）；非 stub 设计文档须含「同构模块识别」章节（同构组+共享 primitive 非空，或声明「已排查，无同构资源族」+ 依据，R25 机读） | 无阻塞 |
 | 开发工程师 | 同上 + `design-problem-list.md` 设计审核通过（R18：12 维齐全、可修复字段完备、P0 覆盖矩阵含验收标准与设计落点原文摘录且全部「已覆盖」、审核结论为通过/复审通过、无未解决问题）；项目经理已完成分派 | 无阻塞 |
 | 质量工程师 | 开发任务对应的功能代码与单元测试；对应开发线状态为执行完成 | 无阻塞 |
-| 测试工程师（批次集成测试） | 本批次开发线对应的质量审核全部通过；**本批次 E2E `gatePassed=true`**（Chromium headless 覆盖本批次 P0 子集，机读产物 `test-results/e2e/.e2e-batch-result.json`）；**本批次须做接口测试且测试报告含非空「## 接口测试报告」章节（R14）**；**本批次须满足存储对账机读判据 `batchStorageReconPresent`（R17，见 `mechanical-gates.md` §8.3）** | 无阻塞 |
-| 测试工程师（最终整体集成测试） | 全部任务包的开发、QE 与**各批次集成测试**（含各批次 E2E）均已执行完成；**全量 E2E `gatePassed=true`**（Chromium headless 覆盖 `requirement-list.md` 全部 P0，机读产物 `test-results/e2e/.e2e-final-result.json`） | 无阻塞 |
+| 测试工程师（批次集成测试） | 本批次开发线对应的质量审核全部通过（质量报告无未解决高/中严重问题、`质量判定` 通过）；**R15 lint `gatePassed=true`**；**R16 静态扫描两项子检查均 `gatePassed=true`** | 无阻塞 |
+| 测试工程师（最终整体集成测试） | 全部任务包的开发、QE 与**各批次集成测试**（含各批次 E2E、R14、R17）均已完成——即 `batchTestComplete` 为真 | 无阻塞 |
 
+> **「派发前置」与「阶段完成判据」须分开看（历史表述纠正）**：本表列的是**发起该角色 Task 前**必须满足的条件（执行权威：`checkRoleDispatchGate`）。批次 E2E、R14 接口测试报告、R17 存储对账**不是**派发 test-engineer 的前置——它们正是 TE 本人要产出的东西，把它们写成派发前置会构成循环依赖（本表旧版曾如此表述，实现从未如此）。这三项的真实约束点在**该阶段完成之后**：由 `gate-stop-workflow` 在「推进下一批次 / 发起最终测试 / 宣告完成」时强制（`batchTestComplete` = 批次测试行完成 && `batchE2ePassed` && `batchApiReportPresent` && `batchStorageReconPresent`），公式见 `mechanical-gates.md` §8.2/§8.3。
+>
 > **两级集成测试 + E2E 机械门禁**：测试工程师执行两类集成测试——①**批次集成测试**：每批次 QE 通过后对本批次新交付任务包做集成测试，`gatePassed≠true` 时视为本批次集成测试未完成，**不得推进下一批次**；②**最终整体集成测试**：全部任务包与各批次 E2E 闭环后对整个产品做端到端集成测试，`gatePassed≠true` 时**不得宣告项目完成**。`测试判定`（最终交付依据）以**最终整体集成测试**（含最终 E2E）结论为准。执行命令、产物路径、浏览器范围与 `gatePassed` 公式的唯一权威定义见 `mechanical-gates.md` §8.3。
 
 **`hotfix` 模式门禁链**：项目经理记录目标 →（**R20** 工作流模式确认）→（**R9** 最小影响澄清 + 设计前置校验）→ 开发工程师 → QE → 测试；跳过完整需求分析师与系统架构师阶段，但**不跳过** PM 分派与 QE/测试。
 
 > **R20（轻量模式确认）**：`hotfix`/`docs-only`/`single-task` 须 AskUserQuestion +「工作流模式确认」机读行后才生效；定义见 `workflow-modes.md`。未确认时 `getWorkflowMode` 按 `full`，且 `gate-role-sequence` 拒绝受门禁角色。
 
-> **R9（hotfix 设计/E2E 前置校验）**：hotfix 虽豁免 R3 四件成果物，但进入开发前 PM 须校验前置，任一不满足**不得**分派开发工程师，须标记 `blocking` 并 `AskQuestion` 请用户决策：
+> **R9（hotfix 设计/E2E 前置校验）**：hotfix 虽豁免 R3 四件成果物，但进入开发前 PM 须校验前置，任一不满足**不得**分派开发工程师，须标记 `blocking` 并在返回结果中标注「需要用户确认：[问题]」由顶层 Agent 用 `AskUserQuestion` 代为请用户决策（Subagent 不含 `AskUserQuestion` 工具）：
 > 1. **设计存在性**（机械门禁，`checkHotfixDesign`）：当前活跃 `process.md` 基目录下须存在 `detail-design-spec.md`。缺失时，PM 可分派 **system-architect** 执行「最小热修设计微任务」（仅补 bug 影响面涉及的设计章节，见 `system-architect.md`），或由用户指认既有设计路径——**禁止**项目经理或顶层代理代写设计（R5）。
 > 2. **E2E 适用性可解析**（文字约束，无机械兜底）：项目有 UI 且 `e2e/specs/**` 已有对应 P0 用例，**或** `gated-artifacts.json` 已声明 `e2eApplicability:"n/a"` 且 `## 用户确认记录` 含 E2E 豁免（`mechanical-gates.md` §8.3）。两者皆无时，PM 请用户确认豁免后由 **system-architect** 在同一微任务内补写 `gated-artifacts.json`。
 > 3. **最小影响澄清与 P0 影响面**（机械门禁，`checkHotfixP0Impact`）：frontmatter 须声明 `hotfix_p0_impact: none` 或 `p0`；**声明 `none` 时，须在 `## 用户确认记录` 补一行「hotfix影响面」记录，写明受影响用户、既有行为是否变化、回滚条件、排查的 P0 编号及排除依据，供 Hook 机读**。这是 hotfix 对完整 RA 苏格拉底澄清的最低补强，项目经理必须向用户核验，不得自行推断；若为 `p0`（热修影响 P0 行为），须改走 `full` 或先完成 R18 需求评审通过后再分派 DE。
@@ -42,6 +44,7 @@
 - `requirement-spec.md`「6. 隐性需求确认记录」缺少完整、枚举合法、关联 `R-编号` 与 §7 追溯的真实数据行，或待决假设未注明责任方与最晚决策点（R19，`gate-role-sequence` 拒绝发起 system-architect）
 - 仅有 `tech-stack-options.md` 而无 `detail-design-spec.md`
 - 设计文档技术栈未经用户明确确认（`## 用户确认记录` 无技术选型/技术栈确认行）
+- 非 stub 的 `detail-design-spec.md` 缺少「同构模块识别」章节，或章节为空、表格无真实数据行、或「已排查，无同构资源族」声明缺排查依据（R25，`gate-role-sequence` 拒绝发起 requirement-reviewer；`hotfix`/`docs-only` 豁免）
 - `process.md` 处于阻塞状态
 - 开发任务未经项目经理分派即已有业务代码
 - `process.md` 缺少 `## 当前分派计划`、表中仅有空白占位行（无真实分派数据行），或任务包编号无法对应 `develop-task-list.md`
@@ -56,6 +59,8 @@
 - 仅完成各批次集成测试、未执行**最终整体集成测试**即据以宣告项目完成
 - 批次/最终 E2E 缺结果产物（`.e2e-batch-result.json` / `.e2e-final-result.json`）、`gatePassed≠true`、或任一浏览器 `missingIds` 非空 / 存在未解释 skip
 - 非 `hotfix`/`docs-only` 迭代缺任一四件成果物（`requirement-spec.md`、`requirement-list.md`、`detail-design-spec.md`、`develop-task-list.md`）或未被 `process.md` 引用时，`gate-dev-workflow` / `gate-dev-shell` 机制拒绝（R3）
-- 试图在 `cancelled: true` 的 `process.md` 上继续推进流程或将其作为分派依据（R10，机制拒绝：`isCancelledProcessFile`）
+- 试图在 `cancelled: true` 的 `process.md` 上继续推进流程或将其作为分派依据（R10，机制拒绝：`isCancelledProcessFile` 冻结写入；`gate-role-sequence` 另拒绝对该流程发起除 `project-manager` 外的**全部**角色 Task）
 
-**用户确认留痕**：凡须用户确认的事项（需求摘要、技术选型、**工作流模式（R20）**等），项目经理须在 `process.md` 的 `## 用户确认记录` 表中追加一行，含确认项、时间、用户原话摘要。轻量模式另须满足 `workflow-modes.md` R20 机读格式，否则 Hook 按 `full` 处理并拒绝受门禁角色 Task。
+> **R10 的 `project-manager` 例外（必要逃生口）**：取消后 `.trae/harness-state.json` 仍指向已冻结的 `process.md`，若连 PM Task 也拒绝，用户将无法建立新流程 → 死锁。故机械层只放行 PM，且 PM 对该文件本身的任何写入仍被冻结拦死（PM 只能引导并创建**新**流程/迭代的 `process.md`）。`AGENTS.md` §5.19 的「含 PM」应理解为「PM 同样不得在该流程上继续推进或改写它」，而非「PM Task 不可发起」。
+
+**用户确认留痕**：凡须用户确认的事项（需求摘要、技术选型、**工作流模式（R20）**等），项目经理须在 `process.md` 的 `## 用户确认记录` 表中追加一行，含确认项、时间、用户原话摘要。轻量模式另须满足 `workflow-modes.md` R20 机读格式，否则 Hook 按 `full` 处理并拒绝受门禁角色 Task。**收敛型用户确认须用「需要用户确认」模式（Trae 适配）**：技术选型（**R26**，system-architect 阶段 1）、需求摘要「确认/需要修改」粗判断（**R27**，requirements-analyst 阶段二）与工作流模式（R20）三处均不得仅以自由文本代替选项化确认；上述角色均为 Subagent，不含 `AskUserQuestion` 工具，须在返回结果中标注「需要用户确认：[选项+推荐标注]」由顶层 Agent 用 `AskUserQuestion` 代为询问。实际询问不可机械化，仅确认记录的结构性存在由 Hook 校验。

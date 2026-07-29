@@ -1,17 +1,22 @@
 #!/usr/bin/env node
 /**
- * 静态代码质量门禁运行器（R16：重复代码 DRY + 安全静态扫描）。判据与产物的唯一权威
- * 定义见 .trae/harness/spec/mechanical-gates.md §8.2（R16）。
+ * 静态代码质量门禁运行器（R16：重复代码 DRY + 安全静态扫描）。
+ *
+ * 职责：解析 dupCheck / securityScan 命令 → 依次执行 → 落盘汇总机读产物。
+ * 判据与产物唯一权威：`.trae/harness/spec/mechanical-gates.md` §8.2（R16）。
+ * 纯函数判据见 `./static-scan-run-lib.mjs`；Hook 侧读取见 `readStaticScanResult()`。
+ *
+ * 命令解析优先级：`harness.config.json` → `qe.commands.dupCheck` / `securityScan`
+ * 覆盖 > 框架默认（jscpd-rs / gitleaks-secret-scanner，经 npx）。跨技术栈通用，
+ * 不做 per-stack 探测（本框架要求 Node.js >= 18）。
+ *
+ * 产物：`test-results/qe/.static-scan-result.json`
+ *   gatePassed = duplication.gatePassed && security.gatePassed
+ * 消费方：`gate-stop-workflow` / `gate-role-sequence`。
+ * 反弱化：禁止擅自提高 jscpd 阈值或扩大 ignore（见 mechanical-gates.md R16）。
  *
  * 用法：
- *   node .trae/scripts/static-scan-run.mjs   # 依次运行重复代码检测与安全静态扫描
- *
- * 命令解析优先级：harness.config.json → qe.commands.dupCheck / qe.commands.securityScan
- * 覆盖 > 通用默认值（jscpd-rs / gitleaks-secret-scanner，经 npx 获取）。两项工具跨技术栈
- * 通用，不需要像 lint-run.mjs 那样按技术栈探测命令。
- * 产物：test-results/qe/.static-scan-result.json（gatePassed 字段），由 workflow-gate-lib.mjs
- * 的 readStaticScanResult() 读取，供 gate-stop-workflow / gate-role-sequence 机械判定。
- * gatePassed = duplication.gatePassed && security.gatePassed；任一无命令或退出码非 0 即为 false。
+ *   node .trae/scripts/static-scan-run.mjs
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,6 +35,7 @@ const HARNESS_CONFIG = path.join(PROJECT_ROOT, '.trae/harness.config.json');
 const RESULT_DIR = path.join(PROJECT_ROOT, 'test-results/qe');
 const RESULT_FILE = path.join(RESULT_DIR, '.static-scan-result.json');
 
+/** 读取 harness.config.json → qe.commands[key]；缺失返回 undefined（走默认命令）。 */
 function loadOverride(key) {
   if (!fs.existsSync(HARNESS_CONFIG)) return undefined;
   try {
@@ -41,11 +47,16 @@ function loadOverride(key) {
   }
 }
 
+/** 截断过长输出，避免机读产物膨胀。 */
 function truncate(text, max = 4000) {
   if (!text) return '';
   return text.length > max ? `${text.slice(0, max)}\n…(truncated)` : text;
 }
 
+/**
+ * 在项目根执行扫描命令，捕获退出码与输出（不抛出）。
+ * @returns {{ exitCode: number, output: string }}
+ */
 function runCommand(command) {
   try {
     const stdout = execSync(command, {
@@ -62,6 +73,11 @@ function runCommand(command) {
   }
 }
 
+/**
+ * 解析命令 → 执行（或无命令）→ 合并子门禁判定字段。
+ * @param {(p: { override?: string|null }) => string|null} resolveCommand
+ * @param {string} overrideKey harness.config.json 中的 commands 键名
+ */
 function runCheck(resolveCommand, overrideKey) {
   const override = loadOverride(overrideKey);
   const command = resolveCommand({ override });
@@ -77,6 +93,7 @@ function runCheck(resolveCommand, overrideKey) {
   };
 }
 
+/** 落盘 `.static-scan-result.json`（含 gatePassed 与两项子结果）。 */
 function writeResult(result) {
   fs.mkdirSync(RESULT_DIR, { recursive: true });
   fs.writeFileSync(RESULT_FILE, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
@@ -95,6 +112,7 @@ function main() {
   };
 
   writeResult(result);
+  // 控制台省略子结果 output；完整输出已在产物文件中。
   console.log(
     JSON.stringify(
       {

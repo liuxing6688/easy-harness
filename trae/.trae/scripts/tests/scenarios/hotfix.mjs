@@ -1,5 +1,8 @@
 /**
- * 场景套件：hotfixScenarios
+ * 场景套件：hotfixScenarios（H1–H6）
+ * 覆盖 R11 折叠通道、R9 热修设计/影响面、R20 模式确认与最终 E2E 唯一通道。
+ *
+ * 入口：node .trae/scripts/gate-scenarios.mjs；脚手架：./_harness.mjs
  */
 import {
   PROJECT_ROOT,

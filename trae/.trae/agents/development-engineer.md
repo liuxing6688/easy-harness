@@ -92,4 +92,5 @@ tools: Read, Write, Edit, Glob, Grep, Bash, LSP
 3. **禁止**在无项目经理分派时响应开发指令；
 4. 实现须严格遵循已确认技术栈与 `gated-artifacts.json` 路径约定；
 5. **代码实现须符合** `detail-design-spec.md` §5 代码规范与代码编写通用原则（SRP/DRY/KISS/SOLID/清晰命名/小函数/完整错误处理/日志规范）及 §8 安全编码要求；质量报告指出规范问题时须整改至 lint 可通过；
-6. 若 Hook 拒绝写入或 Shell 命令，须回报阻塞并要求 project-manager 分派，**不得**绕过 Hook。
+6. 若 Hook 拒绝写入或 Shell 命令，须回报阻塞并要求 project-manager 分派，**不得**绕过 Hook；
+7. **交卷前强制自检 R16（2026-07-28 QE R16 消重复盘新增）**：回报「执行完成」前，须在本地运行一次 `node .trae/scripts/static-scan-run.mjs`（或说明因环境限制无法运行的具体原因），并在回报中附带 `duplication.gatePassed` / `security.gatePassed` 结果摘要。若为 `false`，须先尝试消重/排查，仍无法在本任务包范围内解决时须在回报中明确写出残留克隆对（文件路径/行号或 jscpd 报告摘录）及归属判断（本包新增/存量/疑似兄弟包），供 QE/PM 裁定；**不得**只写「功能完成」「单测通过」掩盖 R16 未过的事实——DRY 不是文字建议，是本条强制自检的输入，QE 首轮因 duplication 打回视为本条未落实的信号。

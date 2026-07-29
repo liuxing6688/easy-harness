@@ -1,7 +1,29 @@
 #!/usr/bin/env node
 /**
- * beforeShellExecution 门禁：系统级工具链安装须先询问用户确认路径。
- * 自锁防护（`.cursor/harness/spec/mechanical-gates.md` §8.4）：见 gate-dev-workflow.mjs 顶部注释，策略一致。
+ * beforeShellExecution 门禁：系统级工具链安装须经用户确认。
+ *
+ * 触发：与 gate-dev-shell 同挂在 `beforeShellExecution`（matcher: `.*`）；
+ * 本 Hook 只关心 `harness.config.json` → `toolchain.installPatterns`
+ * （winget / brew / apt / mise / asdf / nix / VS Build Tools 等）。
+ *
+ * 放行条件（满足其一即可）：
+ *   1. 命令未命中安装模式 → 与本 Hook 无关，allow；
+ *   2. 存在有效 `.toolchain-install-approved.json` 凭证：
+ *      `userConfirmed: true` + 有效时间戳 + **commandHash 与本次命令匹配**（R29 加强，§8.5）；
+ *   3. 否则输出 `ask`，由 beforeShellExecution 通道请用户批准。
+ *
+ * 重要（R29）：代理**不得**自签 `.toolchain-install-approved.json`
+ * （该路径属门禁自治资产，gate-dev-workflow / gate-dev-shell 会 deny）。
+ * 凭证仅可由用户本人创建，用于一段时间内的批量预授权。
+ *
+ * 共享判据：`./workflow-gate-lib.mjs`（`isToolchainInstallCommand` / `hasToolchainInstallApproval`）。
+ * 自锁防护（§8.4）：与其余 Hook 一致——lib/运行时异常 fail-open 放行。
+ */
+/**
+ * 门禁自锁逃生：写 stderr、可选落盘、stdout 输出 allow 后退出。
+ * @param {string} context
+ * @param {unknown} err
+ * @param {object} [lib]
  */
 function failOpenAllow(context, err, lib) {
   process.stderr.write(`[gate-toolchain-install] fail-open (${context}): ${err?.message ?? err}\n`);
@@ -29,17 +51,20 @@ async function main() {
     const input = await readStdinJsonAsync();
     const command = input.command ?? input.tool_input?.command ?? '';
 
+    // 非工具链安装命令：本 Hook 无事可做。
     if (!isToolchainInstallCommand(command)) {
       allow();
     }
 
+    // 用户预授权凭证有效且 commandHash 匹配本次命令 → 放行。
     if (hasToolchainInstallApproval(command)) {
       allow();
     }
 
+    // 未预授权：经 beforeShellExecution 的 ask 请用户批准（有效用户确认通道）。
     ask(
       '工具链安装门禁：须先询问用户现有工具链路径或安装目标目录（避免未经确认的默认系统路径），在用户明确确认前不得自动安装。',
-      'AGENTS.md gate-toolchain-install：请先使用 AskQuestion 询问用户工具链的现有路径或安装目录。用户确认后创建 `.cursor/hooks/.toolchain-install-approved.json`（含 approvedAt、userConfirmed: true，可选 commandHash），默认 60 分钟内有效，再重试安装命令。',
+      'AGENTS.md gate-toolchain-install：请先使用 AskQuestion 询问用户工具链的现有路径或安装目录，然后直接重试本命令——本通道（beforeShellExecution）的 `ask` 会请用户批准，这就是有效的用户确认。**不要**自行创建 `.cursor/hooks/.toolchain-install-approved.json`：该凭证已按 **R29** 禁止代理写入（自签授权），只有用户本人可创建它来做一段时间内的批量预授权（须含 userConfirmed、有效时间戳与与本命令匹配的 commandHash）。',
     );
   } catch (err) {
     failOpenAllow('runtime', err, lib);

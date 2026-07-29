@@ -1,6 +1,9 @@
 /**
  * 门禁单元自测共享脚手架（fixture / assert / 快照还原）。
- * 各规则套件从本模块导入 test/fixtureProcess 等，勿在套件内重复造轮子。
+ *
+ * 各规则套件从本模块导入 `test` / `fixtureProcess` / `cleanup` 等，勿在套件内重复造轮子。
+ * 跨套件常量与 Markdown 工厂放 `./_fixtures.mjs`。
+ * 修改本文件后跑：`node .cursor/scripts/gate-selftest.mjs`。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,6 +21,9 @@ import {
   checkBatchStorageReconciliationReport,
   isStorageReconciliationExempt,
   isE2eExempt,
+  isAlternativeE2eStartupCommand,
+  isAlternativeE2eStartupExempt,
+  checkTeAlternativeE2eStartup,
   isLintExempt,
   readLintResult,
   checkLintClean,
@@ -58,6 +64,28 @@ import {
   checkReconEvidenceRef,
   excerptInDesignAnchorWindow,
   extractDesignSectionWindow,
+  checkIsomorphicModuleSection,
+  checkIsomorphicModuleSectionReady,
+  // R28/R29/R30/R31 与 R5/R6 加强项
+  decodeTextBuffer,
+  readTextFileSafe,
+  readJsonFileSafe,
+  parseProcessFrontmatter,
+  classifyHarnessSelfGovernedPath,
+  harnessSelfGovernedVerdict,
+  isHarnessStatePath,
+  classifyShellWriteIntent,
+  extractShellPathCandidates,
+  hasToolchainInstallApproval,
+  hashCommandForApproval,
+  TOOLCHAIN_APPROVAL_MARKER,
+  readRootConversationRecord,
+  isRootConversationBaselineStale,
+  isRootConversationBaselineExpired,
+  inspectIdentityBaseline,
+  parseRollbackCounts,
+  checkRollbackLimit,
+  getRollbackLimit,
 } from '../../../hooks/workflow-gate-lib.mjs';
 import { resolveLintCommand, computeLintGate } from '../../lint-run-lib.mjs';
 import {
@@ -162,6 +190,13 @@ export function restoreRootConversationState() {
 export function clearRootConversationState() {
   fs.rmSync(ROOT_CONVERSATION_STATE, { force: true });
 }
+/** 以指定 id 与时间戳直接写入基准（R5 TTL 自愈用例需要构造陈旧基准） */
+export function writeRootConversationState(rootConversationId, recordedAt) {
+  fs.mkdirSync(path.dirname(ROOT_CONVERSATION_STATE), { recursive: true });
+  const payload = { rootConversationId };
+  if (recordedAt !== undefined) payload.recordedAt = recordedAt;
+  fs.writeFileSync(ROOT_CONVERSATION_STATE, JSON.stringify(payload), 'utf8');
+}
 
 const RECON_DIR = path.join(PROJECT_ROOT, 'test-results/recon');
 let _reconSnapshot;
@@ -223,6 +258,7 @@ export {
   isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,
   isCancelledProcessFile, checkRoleDispatchGate, checkBatchApiTestReport, isApiTestExempt,
   checkBatchStorageReconciliationReport, isStorageReconciliationExempt, isE2eExempt,
+  isAlternativeE2eStartupCommand, isAlternativeE2eStartupExempt, checkTeAlternativeE2eStartup,
   isLintExempt, readLintResult, checkLintClean, isDupCheckExempt, isSecurityScanExempt,
   readStaticScanResult, checkStaticScanClean, hasUnresolvedIssues, isProcessBlocked,
   checkDesignProblemListStructure, checkRequirementCoverageMatrix, extractP0RequirementIds,
@@ -233,11 +269,56 @@ export {
   recordRootConversationId, checkLiteModeConfirmed, hasLiteModeConfirmation, getWorkflowMode,
   getDeclaredWorkflowMode, readRootConversationId, isRootConversationCaller, recordDispatchedRole,
   readRecentlyDispatchedRoles, isGatedRoleArtifactPath, expectedRolesForPath,
-  checkRolePathPermission, collectActiveRoleSlugs, checkReconEvidenceRef,
+  checkRolePathPermission, collectActiveRoleSlugs,   checkReconEvidenceRef,
   excerptInDesignAnchorWindow, extractDesignSectionWindow,
+  checkIsomorphicModuleSection, checkIsomorphicModuleSectionReady,
   resolveLintCommand, computeLintGate, resolveDupCommand, resolveSecurityCommand,
   computeSubGate, computeStaticScanGate,
+  decodeTextBuffer, readTextFileSafe, readJsonFileSafe, parseProcessFrontmatter,
+  classifyHarnessSelfGovernedPath, harnessSelfGovernedVerdict, isHarnessStatePath,
+  classifyShellWriteIntent, extractShellPathCandidates,
+  hasToolchainInstallApproval, hashCommandForApproval, TOOLCHAIN_APPROVAL_MARKER,
+  readRootConversationRecord, isRootConversationBaselineStale,
+  isRootConversationBaselineExpired, inspectIdentityBaseline,
+  parseRollbackCounts, checkRollbackLimit, getRollbackLimit,
 };
+
+/** 以指定编码写出 fixture 文件（R30 编码鲁棒性用） */
+export function writeEncodedFixture(relPath, content, encoding = 'utf8') {
+  const abs = path.join(FIXTURE_ROOT, relPath);
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  if (encoding === 'utf8-bom') {
+    fs.writeFileSync(abs, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(content, 'utf8')]));
+  } else if (encoding === 'utf16le') {
+    fs.writeFileSync(abs, Buffer.from(content, 'utf16le'));
+  } else if (encoding === 'utf16le-bom') {
+    fs.writeFileSync(abs, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(content, 'utf16le')]));
+  } else {
+    fs.writeFileSync(abs, content, 'utf8');
+  }
+  return abs;
+}
+
+let _toolchainMarkerSnapshot;
+export function snapshotToolchainMarker() {
+  _toolchainMarkerSnapshot = fs.existsSync(TOOLCHAIN_APPROVAL_MARKER)
+    ? fs.readFileSync(TOOLCHAIN_APPROVAL_MARKER, 'utf8')
+    : null;
+}
+export function restoreToolchainMarker() {
+  if (_toolchainMarkerSnapshot === null || _toolchainMarkerSnapshot === undefined) {
+    fs.rmSync(TOOLCHAIN_APPROVAL_MARKER, { force: true });
+  } else {
+    fs.writeFileSync(TOOLCHAIN_APPROVAL_MARKER, _toolchainMarkerSnapshot, 'utf8');
+  }
+}
+export function writeToolchainMarker(data) {
+  fs.mkdirSync(path.dirname(TOOLCHAIN_APPROVAL_MARKER), { recursive: true });
+  fs.writeFileSync(TOOLCHAIN_APPROVAL_MARKER, JSON.stringify(data), 'utf8');
+}
+export function clearToolchainMarker() {
+  fs.rmSync(TOOLCHAIN_APPROVAL_MARKER, { force: true });
+}
 
 export function finishSelftest() {
   cleanup();

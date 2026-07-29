@@ -11,7 +11,9 @@
 | `lint-gate.mjs` | L1–L4 |
 | `static-scan-gate.mjs` | S1–S5 |
 | `adversarial.mjs` | A1–A10 |
-| `r5-conversation.mjs` | C1–C11 |
+| `r5-conversation.mjs` | C1–C17 |
+| `te-smoke.mjs` | SM0–SM6 TE 替代启动冒烟门禁（R22） |
+| `hardening.mjs` | 审核加固项 R28–R31 与 R5·R6 加强（端到端） |
 | `finding1.mjs` | B1 出厂模板 |
 
 新增场景：新建 `*.mjs` 导出函数，在 `run-all.mjs` 注册调用。

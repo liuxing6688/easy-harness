@@ -1,5 +1,9 @@
 /**
- * 门禁域：dispatch — R13 角色派发门禁、parseWorkflowState
+ * 门禁域：dispatch — R13 角色派发门禁（checkRoleDispatchGate）、parseWorkflowState（stop 门禁状态机）。
+ *
+ * 主要消费方：gate-role-sequence、gate-stop-workflow。
+ * 修改 ROLE_GATE 分支或 state 字段时须同步 mechanical-gates.md §8.1/§8.2 与场景回归。
+ * 域对照见 ./README.md。
  */
 import {
   readProcessMd,
@@ -17,6 +21,7 @@ import {
   checkDesignReviewClean,
   checkTechSelectionConfirmed,
   checkHotfixP0Impact,
+  checkIsomorphicModuleSectionReady,
 } from './design.mjs';
 import {
   extractQeDispatchTaskPacks,
@@ -36,6 +41,11 @@ import {
 import { roleProgressStats, testEngineerStats } from './role-path.mjs';
 import { readE2eResult, readLintResult, readStaticScanResult } from './iteration.mjs';
 
+/**
+ * R13：按角色校验门禁链前置条件是否满足。
+ * @param {string} role agent slug（如 `development-engineer`）
+ * @returns {{ ok: boolean, reason: string, message?: string }}
+ */
 export function checkRoleDispatchGate(role) {
   const content = readProcessMd();
   if (!content) return { ok: true, reason: 'no-process-yet' };
@@ -112,6 +122,15 @@ export function checkRoleDispatchGate(role) {
             ok: false,
             reason: tech.reason,
             message: tech.message,
+          };
+        }
+        // R25：非 stub 设计文档须已排查同构模块并声明共享 primitive
+        const iso = checkIsomorphicModuleSectionReady();
+        if (!iso.ok) {
+          return {
+            ok: false,
+            reason: iso.reason,
+            message: iso.message,
           };
         }
       }
