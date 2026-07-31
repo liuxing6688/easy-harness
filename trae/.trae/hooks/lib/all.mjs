@@ -4,6 +4,7 @@
  * 本文件勿写业务逻辑；新增域时同步更新本文件与 workflow-gate-lib.mjs。
  */
 export * from './core.mjs';
+export * from './execproof.mjs';
 export * from './paths.mjs';
 export * from './identity.mjs';
 export * from './role-path.mjs';

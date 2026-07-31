@@ -4,6 +4,17 @@
 | -------- | -------- | ---------- | -------- | -------- | -------- | ------------ | -------- | ---------- |
 | | R- | T- | 集成/E2E/接口 | | | | 高/中/低 | |
 
+## 生产启动冒烟
+
+> R32（`.cursor/harness/spec/mechanical-gates.md` §8.6，机读硬门禁）：跑 E2E 前须对 `detail-design-spec.md` §4「生产启动与异常恢复」声明的**生产启动命令**执行 `node .cursor/scripts/startup-smoke-run.mjs`，含两段：①**干净启动**（进程稳定存活 / 健康检查通过）；②**强杀后再启动**（覆盖陈旧锁、PID 残留、端口未释放等异常退出恢复）。机读产物 `test-results/e2e/.startup-smoke-result.json` 须 `gatePassed=true`，且批次与最终两级测试均校验。
+>
+> **冒烟失败属产品缺陷**：须判定测试不通过、标 `blocking: true` 并建议回派 development-engineer；**禁止**改用 `E2E_WEB_SERVER_COMMAND` / `vite-node` 等替代启动命令绕过（R22），也不得用 `startupSmokeApplicability:"n/a"` 掩盖「暂时起不来」。确无常驻启动路径的纯库/纯静态资源包，走双要素豁免后本章节可填豁免依据。
+
+| 阶段 | 启动命令 | 命令来源 | 健康检查 | 结果 | 退出码/信号 | 说明 |
+| ---- | -------- | -------- | -------- | ---- | ----------- | ---- |
+| 干净启动 | | design §4 / gated-artifacts / package.json | | 通过/不通过 | | |
+| 强杀后再启动 | | 同上 | | 通过/不通过 | | |
+
 ## 接口测试报告
 
 > R14（`.cursor/harness/spec/mechanical-gates.md` §8.3）：**开发窗口批次集成测试阶段必须做接口测试**。本章节须填入实际接口测试用例数据行，**不得留空**；空章节（仅表头无数据行）会被 stop 门禁判定为批次集成测试未完成，阻止推进下一批次与最终整体集成测试。**无对外接口**的纯算法库/纯静态前端项目，可走「接口测试适用性豁免」（架构师在 `gated-artifacts.json` 声明 `apiTestApplicability:"n/a"` + 用户在 `process.md` 确认），豁免后本章节可省略，详见 `test-engineer.md`「接口测试适用性豁免」。涉及业务数据写入的接口用例须同步在下方「## 存储对账记录」留痕（R17）。

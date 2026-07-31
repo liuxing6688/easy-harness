@@ -65,8 +65,8 @@ export function greenfieldScenarios() {
   const readyProc = relToProject(path.join(ready, 'docs/process/process.md'));
   const readyGated = relToProject(path.join(ready, 'docs/design/gated-artifacts.json'));
 
-  // R32：ready fixture 仅含 DE，发起 SA 属越级派发（PM 未计划 SA），应被拒。
-  check('G2 R32：分派计划仅含 DE 时发起 system-architect 被拒（越级派发）', 'deny', {
+  // R39：ready fixture 仅含 DE，发起 SA 属越级派发（PM 未计划 SA），应被拒。
+  check('G2 R39：分派计划仅含 DE 时发起 system-architect 被拒（越级派发）', 'deny', {
     hook: 'role', role: 'system-architect', processPath: readyProc, gatedPath: readyGated,
   });
   const readyForSA = writeFixture('gf-ready-sa', {
@@ -75,7 +75,7 @@ export function greenfieldScenarios() {
     'docs/requirement/requirement-list.md': REQ_LIST,
     'docs/design/gated-artifacts.json': GATED_EMPTY,
   });
-  check('G2b R32：SA 在分派计划中时发起 system-architect 放行', 'allow', {
+  check('G2b R39：SA 在分派计划中时发起 system-architect 放行', 'allow', {
     hook: 'role', role: 'system-architect',
     processPath: relToProject(path.join(readyForSA, 'docs/process/process.md')),
     gatedPath: relToProject(path.join(readyForSA, 'docs/design/gated-artifacts.json')),

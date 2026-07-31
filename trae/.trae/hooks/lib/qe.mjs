@@ -1,5 +1,6 @@
 /**
- * 门禁域：qe — R14–R17 接口测试/存储对账、R15–R16 lint/静态扫描豁免与机读、R22 TE 冒烟。
+ * 门禁域：qe — R14–R17 接口测试/存储对账、R15–R16 lint/静态扫描豁免与机读、
+ * R22 TE 替代启动拦截、R32 生产启动冒烟正向证据。
  *
  * 「双要素豁免」统一在本域实现（gated-artifacts Applicability + process.md 用户确认关键词）。
  * 主要消费方：gate-stop-workflow / gate-role-sequence / gate-dev-shell（R22）。域对照见 ./README.md。
@@ -21,8 +22,18 @@ import {
   ROLE_ALIASES,
   readTextFileSafe,
   readJsonFileSafe,
+  getStartupSmokeMaxAgeHours,
 } from './core.mjs';
-import { readLintResult, readStaticScanResult } from './iteration.mjs';
+import {
+  readLintResult,
+  readStaticScanResult,
+  readStartupSmokeResult,
+  readE2eResult,
+  evaluateGateArtifact,
+  toolUnavailableMessage,
+} from './iteration.mjs';
+import { verifyExecutionProof, checkArtifactFreshness } from './execproof.mjs';
+import { evaluateStartupSmokeResult } from '../../scripts/startup-smoke-lib.mjs';
 import { readRecentlyDispatchedRoles } from './identity.mjs';
 import {
   extractTaskCode
@@ -106,6 +117,88 @@ export function checkTeAlternativeE2eStartup(command) {
     message:
       'R5/R22（TE 冒烟）：最近派发为 test-engineer，禁止使用 E2E_WEB_SERVER_COMMAND / vite-node 等替代启动命令掩盖生产启动失败。须先用 design/默认生产启动命令（如 npm run start）冒烟；失败则测试不通过并回派 DE。仅当 gated-artifacts.json 声明 e2eAlternativeStartup:"allowed" 且用户在「## 用户确认记录」确认「允许非 dist 启动做 E2E」时方可变通。',
   };
+}
+
+/**
+ * R32：生产启动冒烟适用性豁免——确无可冒烟启动路径的项目（纯库、纯静态资源包、
+ * 无常驻进程的 CLI 单次命令等）可豁免，判定与 R14/R17 同构（`mechanical-gates.md` §8.2 双要素）：
+ * ①`gated-artifacts.json` 声明 `startupSmokeApplicability: "n/a"`；
+ * ②`process.md`「## 用户确认记录」含一行生产启动/启动冒烟豁免确认。两项皆满足才豁免（R12）。
+ *
+ * 注意：**「暂时起不来」不是豁免理由**——冒烟失败属产品缺陷，须回派 DE，而非声明不适用。
+ */
+function hasStartupSmokeExemptionConfirmation(content) {
+  const body = extractSection(content, '用户确认记录');
+  if (!body) return false;
+  for (const line of body.split('\n')) {
+    const t = line.trim();
+    if (!t.startsWith('|')) continue;
+    if (/^\|[\s|:-]+\|?$/.test(t)) continue;
+    if (/启动冒烟|生产启动/.test(t) && /豁免|不适用|n\/a|无启动|无常驻/i.test(t)) return true;
+  }
+  return false;
+}
+
+export function isStartupSmokeExempt(content) {
+  const artifacts = loadGatedArtifacts();
+  if (artifacts.startupSmokeApplicability !== 'n/a') return false;
+  const md = content ?? readProcessMd();
+  if (!md) return false;
+  return hasStartupSmokeExemptionConfirmation(md);
+}
+
+/**
+ * R32：生产启动冒烟硬门禁（正向证据）——测试工程师须实际运行
+ * `node .trae/scripts/startup-smoke-run.mjs` 并取得 `gatePassed=true`。
+ *
+ * 与 R22 的分工：R22 拦「用替代启动命令掩盖失败」（负向、Shell 通道），本判据要求
+ * 「拿出冒烟通过的证据」（正向、产物通道）。只有两者同时存在，才堵住「干脆不冒烟」
+ * 这条在 2026-07-29 复盘中真实发生过的路径。
+ *
+ * docs-only 无开发窗口视为满足；双要素豁免视为满足。
+ */
+export function checkStartupSmoke(content) {
+  const md = content ?? readProcessMd() ?? '';
+  if (getWorkflowMode(md) === 'docs-only') return { ok: true, reason: 'docs-only' };
+  if (isStartupSmokeExempt(md)) return { ok: true, reason: 'startup-smoke-exempt' };
+  const artifact = readStartupSmokeResult();
+  // 产物缺失/新鲜度/两段完整性等具体理由由 evaluateStartupSmokeResult 给出（TE 需要它们定位失败段），
+  // 故此处**不套用** evaluateGateArtifact 的 `gatePassed` 分支，只前置它的两段判据：
+  //   R34 验签——未验签的产物，其 capturedAt 与两段结果都不可信，须先拦；
+  //   R38 工具不可用——启动命令压根不存在时，问题在环境而非产品（本门禁刻意只认这一类，见运行器注释）。
+  if (artifact) {
+    const proof = verifyExecutionProof('startup-smoke', artifact);
+    if (!proof.ok) return proof;
+    // R34 新鲜度：R32 本就有 24h 上限，但「24 小时内」不等于「这份代码」——
+    // 上午跑绿、下午改坏代码，冒烟产物仍在有效期内。故同样要求晚于最后一次源码变更。
+    const fresh = checkArtifactFreshness('startup-smoke', artifact);
+    if (!fresh.ok) return fresh;
+    if (artifact.toolUnavailable === true && artifact.gatePassed !== true) {
+      return {
+        ok: false,
+        reason: 'startup-tool-unavailable',
+        toolUnavailable: true,
+        message: toolUnavailableMessage('startup-smoke', artifact),
+      };
+    }
+  }
+  return evaluateStartupSmokeResult(artifact, { maxAgeHours: getStartupSmokeMaxAgeHours() });
+}
+
+/**
+ * 批次/最终 E2E 门禁判据（**R34** 验签 + **R38** 工具不可用分类 + 既有 `gatePassed`）。
+ * 抽出成独立判据后，`parseWorkflowState` 不再直接读 `gatePassed`，与 R15/R16/R32 同构。
+ * @param {'batch'|'final'} scope
+ */
+export function checkE2eGate(scope) {
+  return evaluateGateArtifact({
+    kind: scope === 'final' ? 'e2e-final' : 'e2e-batch',
+    artifact: readE2eResult(scope),
+    missingReason: `no-e2e-${scope}-result`,
+    unavailableReason: `e2e-${scope}-tool-unavailable`,
+    isPassed: (a) => a.gatePassed === true,
+    failedReason: `e2e-${scope}-not-passed`,
+  });
 }
 
 /**
@@ -572,34 +665,51 @@ export function checkQeClean() {
 
 /**
  * R15：编程规范（lint）门禁是否通过（供发起 test-engineer 前机械校验，与 checkQeClean 并列）。
- * docs-only 模式或经双要素适用性豁免时视为通过；否则须存在 lint-run.mjs 机读产物且 gatePassed=true。
+ * docs-only 模式或经双要素适用性豁免时视为通过；否则须存在 lint-run.mjs 机读产物、
+ * **R34** 执行证明验签通过、且 gatePassed=true。
+ *
+ * `content` 可选（缺省读活跃 process.md）：`parseWorkflowState` 传入自己手上的内容，
+ * 使 stop 门禁与 R13 派发门禁走**同一份判据**，不再各算一遍（历史实现两处各自读产物、
+ * 各自判 gatePassed，任何一侧加判据都可能与另一侧漂移）。
  */
-export function checkLintClean() {
-  const content = readProcessMd() ?? '';
-  if (getWorkflowMode(content) === 'docs-only') return { ok: true, reason: 'docs-only' };
-  if (isLintExempt(content)) return { ok: true, reason: 'lint-exempt' };
-  const result = readLintResult();
-  if (!result) return { ok: false, reason: 'no-lint-result' };
-  return result.gatePassed === true
-    ? { ok: true, reason: 'checked' }
-    : { ok: false, reason: 'lint-not-passed' };
+export function checkLintClean(content) {
+  const md = content ?? readProcessMd() ?? '';
+  if (getWorkflowMode(md) === 'docs-only') return { ok: true, reason: 'docs-only' };
+  if (isLintExempt(md)) return { ok: true, reason: 'lint-exempt' };
+  return evaluateGateArtifact({
+    kind: 'lint',
+    artifact: readLintResult(),
+    missingReason: 'no-lint-result',
+    unavailableReason: 'lint-tool-unavailable',
+    isPassed: (a) => a.gatePassed === true,
+    failedReason: 'lint-not-passed',
+  });
 }
 
 /**
  * R16：静态代码质量门禁是否通过（供发起 test-engineer 前机械校验，与 checkLintClean 并列）。
- * docs-only 模式视为通过；否则须存在 static-scan-run.mjs 机读产物且 gatePassed=true，
- * 或重复代码/安全扫描分别经双要素豁免后各自视为满足。
+ * docs-only 模式视为通过；否则须存在 static-scan-run.mjs 机读产物、**R34** 执行证明验签通过、
+ * 且两项子检查均 gatePassed=true，或重复代码/安全扫描分别经双要素豁免后各自视为满足。
  */
-export function checkStaticScanClean() {
-  const content = readProcessMd() ?? '';
-  if (getWorkflowMode(content) === 'docs-only') return { ok: true, reason: 'docs-only' };
-  const result = readStaticScanResult();
-  const dupOk = isDupCheckExempt(content) || result?.duplication?.gatePassed === true;
-  const securityOk = isSecurityScanExempt(content) || result?.security?.gatePassed === true;
-  if (dupOk && securityOk) return { ok: true, reason: 'checked' };
-  if (!result) return { ok: false, reason: 'no-static-scan-result' };
-  if (!dupOk) return { ok: false, reason: 'dup-check-not-passed' };
-  return { ok: false, reason: 'security-scan-not-passed' };
+export function checkStaticScanClean(content) {
+  const md = content ?? readProcessMd() ?? '';
+  if (getWorkflowMode(md) === 'docs-only') return { ok: true, reason: 'docs-only' };
+  const dupExempt = isDupCheckExempt(md);
+  const securityExempt = isSecurityScanExempt(md);
+  if (dupExempt && securityExempt) return { ok: true, reason: 'checked' };
+  return evaluateGateArtifact({
+    kind: 'static-scan',
+    artifact: readStaticScanResult(),
+    missingReason: 'no-static-scan-result',
+    unavailableReason: 'static-scan-tool-unavailable',
+    isPassed: (a) =>
+      (dupExempt || a.duplication?.gatePassed === true) &&
+      (securityExempt || a.security?.gatePassed === true),
+    failedReason: (a) =>
+      dupExempt || a.duplication?.gatePassed === true
+        ? 'security-scan-not-passed'
+        : 'dup-check-not-passed',
+  });
 }
 
 /**

@@ -15,6 +15,11 @@
 
 - Harness Hook 与初始化脚本依赖 `Node.js >= 18` 执行 `.mjs` 文件。
 - 目标项目的业务技术栈不限；具体运行时、包管理器与测试工具由系统架构师在设计阶段声明。
+- **机械门禁自身的运行依赖**（本框架刻意不预置 `package.json`——它会在「整体复制到宿主项目」时覆盖宿主的清单，故须由宿主项目安装）：
+  - E2E 门禁（`e2e-run.mjs`）需 `@playwright/test` 与 Chromium：`npm i -D @playwright/test && npx playwright install chromium`。未安装时运行器会**前置自检并报 `missing-playwright-dependency`**（而不是跑一遍再报「报告缺失」），按提示装好即可。
+  - R16 静态扫描（`static-scan-run.mjs`）首次运行需联网经 `npx` 拉取 `jscpd-rs` / `gitleaks-secret-scanner`；离线环境须走 `qe.commands` 覆盖或双要素豁免。
+  - 框架自测的纯函数单测需 `vitest`（见下文「框架自测」）。
+  - 以上安装均属系统/项目级依赖，须由 DE/TE 走「检测→询问用户→确认→安装」流程，不得由顶层代理直接执行。
 
 ## 快速开始
 
@@ -36,7 +41,7 @@
 
 4. **（可选）手动初始化**：仅当你要在无 AI 环境下预先建目录时，可执行 `node .cursor/scripts/bootstrap-docs.mjs`；Feature 迭代可执行 `node .cursor/scripts/bootstrap-docs.mjs --feature=feature-name`。
 
-5. **轻量模式**（**R20**：AskQuestion 确认 + `## 用户确认记录`「工作流模式确认」机读行后生效；未确认按 `full`）：`hotfix`（修缺陷，测试按 R11 折叠为单次）、`docs-only`（只改文档）、`single-task`（单文件小改）。分诊提议、确认格式与 fail-safe 见 `.cursor/harness/spec/workflow-modes.md`；门禁链见 `.cursor/harness/spec/gate-chain.md`（`AGENTS.md` §4/§6 为常驻摘要）。轻量模式须在 `process.md` frontmatter 设置 `workflow_mode`，且不得仅凭口令关键词落盘。
+5. **轻量模式**（**R20**：AskQuestion 确认 + `## 用户确认记录`「工作流模式确认」机读行后生效；未确认按 `full`）：`hotfix`（修缺陷，测试按 R11 折叠为单次）、`docs-only`（只改文档）、`single-task`（**增量迭代**：已有设计的项目加个功能，测试折叠为单轮但判据不减，见 **R37**）。分诊提议、确认格式与 fail-safe 见 `.cursor/harness/spec/workflow-modes.md`；门禁链见 `.cursor/harness/spec/gate-chain.md`（`AGENTS.md` §4/§6 为常驻摘要）。轻量模式须在 `process.md` frontmatter 设置 `workflow_mode`，且不得仅凭口令关键词落盘。
 
 6. **流程终止（不可逆）**：明确表达「取消」「终止流程」等意图时，项目经理会先用 `AskQuestion` 做二次确认；确认后该流程的 `process.md` 被 Hook 永久冻结（`cancelled: true`），任何角色均无法再修改或恢复，需继续须发起新流程。完整定义见 `.cursor/harness/spec/workflow-modes.md`「流程终止（不可逆，R10）」与 `AGENTS.md` §4 摘要。
 
@@ -58,7 +63,7 @@ flowchart LR
   M -->|docs-only| DOC[仅 docs]
   DE --> QE[quality-engineer]
   QE -->|R15/R16| TE[test-engineer]
-  TE -->|E2E · R14 · R17| DONE[交付 / 下一批次]
+  TE -->|E2E · R14 · R17 · R32| DONE[交付 / 下一批次]
 ```
 
 | 角色 | agent `name` | 主责 |
@@ -69,14 +74,14 @@ flowchart LR
 | 需求评审专家 | `requirement-reviewer` | **仅**审核系统设计（R18），不参与需求澄清 |
 | 开发工程师 | `development-engineer` | 实现与单测；含 `.cursor/scripts\|agents\|hooks/**` 基建 |
 | 质量工程师 | `quality-engineer` | 质量报告；跑 lint（R15）与静态扫描（R16） |
-| 测试工程师 | `test-engineer` | 批次/最终集成测试、E2E、接口测试（R14）、存储对账（R17） |
+| 测试工程师 | `test-engineer` | 批次/最终集成测试、E2E、接口测试（R14）、存储对账（R17）、生产启动冒烟（R32） |
 
 **模式捷径**（须 **R20** AskQuestion + 机读确认行后生效，未确认 fail-safe 为 `full`）：
 
 - `full`：上图完整链；批次测试与最终测试两级，均含 E2E。
 - `hotfix`：跳过完整 RA/SA（须 R9 设计与影响面）；QE 与测试不省；测试按 **R11** 折叠为单次通道。
 - `docs-only`：仅改 `docs/**/*.md`，Hook 拒源码写入。
-- `single-task`：与 `full` 同角色链，仅压缩分派节奏（R2）；测试判据与 `full` 同严，**不**按 R11 折叠。
+- `single-task`：**增量迭代档**（**R37**，2026-07-30 重构）。适用于在**已有基线设计**的项目上加一个功能增量。**省两项**：测试折叠为**单轮**集成测试 + E2E（不再分批次/最终）、豁免 R26 技术选型确认（沿用基线技术栈）。**其余一条不减**：R14 接口测试 / R17 存储对账 / R32 启动冒烟 / R15 / R16 / R18 设计审核 / R25 同构模块识别 / R19·R27·R33 需求确认全部保留——与 `hotfix` R11 折叠通道的唯一差异就是**保留 R14/R17**（热修不新增接口面，增量常常新增）。**前置**：基线 `detail-design-spec.md` 存在 + `process.md`「## 增量范围」四维声明；**声明涉及 schema 变更时本档失效**，须改走 `full`。细则见 `workflow-modes.md`「`single-task` = 增量迭代档」。
 
 编号导航见 `.cursor/harness/spec/rule-index.md`；门禁链细则见 `gate-chain.md`；公式与 Hook 一览见 `mechanical-gates.md`（含 **§8.4** R21–R24 / **§8.5** 审核加固 R28–R31）。
 
@@ -111,9 +116,9 @@ cursor/                       # 适配 Cursor 的完整规约根（目录名任�
     ├── harness-state.json    # 运行时生成：当前活跃 process.md 指针
     ├── harness/
     │   └── spec/             # 说明权威（按需阅读 / 改门禁时必读）
-    │       ├── mechanical-gates.md   # Hook 一览、stop 判据、R11/R14–R17/E2E、双要素豁免、能力边界
-    │       ├── gate-chain.md         # 成果物门禁链展开、R9、无效成果物
-    │       ├── workflow-modes.md     # 模式分诊、R2、R20、路径约定、R10 步骤
+    │       ├── mechanical-gates.md   # Hook 一览、stop 判据、R11/R14–R17/E2E/R32–R33、双要素豁免、能力边界（§8.7 机械层实际强度、§8.8 R34–R38）
+    │       ├── gate-chain.md         # 成果物门禁链展开、R9、R37 增量档前置、无效成果物
+    │       ├── workflow-modes.md     # 模式分诊、R2、R20、R37 增量迭代档、路径约定、R10 步骤
     │       ├── rollback.md           # 回退计数与终止
     │       └── rule-index.md         # R/B/TG 编号导航（不新增约束）
     ├── rules/                # 渐进披露提醒（alwaysApply: false，靠 globs 挂载）
@@ -136,9 +141,12 @@ cursor/                       # 适配 Cursor 的完整规约根（目录名任�
     │   ├── gate-dev-shell.mjs         # beforeShellExecution：初始化/装依赖等
     │   ├── gate-toolchain-install.mjs # beforeShellExecution：系统级工具链批准
     │   ├── gate-subagent-track.mjs    # subagentStart：记录顶层 conversation_id（R5，恒放行）
-    │   ├── gate-stop-workflow.mjs     # stop：未完成则 followup（含 R15/R16/E2E/R14/R17）
+    │   ├── gate-stop-workflow.mjs     # stop：未完成则 followup（含 R15/R16/E2E/R14/R17/R32/R34/R35/R38）
     │   ├── workflow-gate-lib.mjs      # 薄 barrel：再导出 lib/*
-    │   └── lib/              # 门禁实现按域拆分（core/paths/identity/design/qe/…，见 lib/README.md）
+    │   ├── .exec-proof-ledger.json    # 运行时生成（R34）：nonce 台账（公钥）；R29 禁写、已 gitignore
+    │   ├── .exec-proof-pending/       # 运行时生成（R34）：私钥交接目录，运行器领取后即删
+    │   ├── .gate-exception-ledger.json # 运行时生成（R35）：门禁异常事件出处台账；R29 禁写、已 gitignore
+    │   └── lib/              # 门禁实现按域拆分（core/execproof/paths/identity/design/qe/…，见 lib/README.md）
     ├── scripts/
     │   ├── bootstrap-docs.mjs   # 一键初始化 docs/ 结构（幂等）
     │   ├── e2e-run.mjs          # 批次/最终 E2E 门禁运行器（Chromium-only，见 mechanical-gates.md §8.3）
@@ -147,8 +155,12 @@ cursor/                       # 适配 Cursor 的完整规约根（目录名任�
     │   ├── vitest.config.ts     # 上述单测的 vitest 配置
     │   ├── lint-run.mjs         # 编程规范（lint）硬门禁运行器（R15，见 mechanical-gates.md §8.2）
     │   ├── lint-run-lib.mjs     # lint-run.mjs 的纯函数库（gatePassed 判据）
+    │   ├── startup-smoke-run.mjs      # 生产启动冒烟运行器（R32：干净启动 + 强杀后再启动，见 §8.6）
+    │   ├── startup-smoke-lib.mjs      # startup-smoke-run.mjs 的纯函数库（命令解析、两段判据、新鲜度）
+    │   ├── startup-smoke-lib.test.ts  # startup-smoke-lib.mjs 的 vitest 单测（框架自测）
     │   ├── static-scan-run.mjs     # 静态代码质量硬门禁运行器（R16：重复代码+安全扫描，见 mechanical-gates.md §8.2）
     │   ├── static-scan-run-lib.mjs # static-scan-run.mjs 的纯函数库（gatePassed 判据）
+    │   ├── tool-availability-lib.mjs # R38：区分「工具不可用」与「检查未通过」（各运行器共用，见 §8.8）
     │   ├── qe-run.mjs           # 跨技术栈 QE 命令运行器（Windows 退出码不可靠时的留痕手段）
     │   ├── gate-selftest.mjs    # 单元自测薄入口 → tests/selftest/
     │   ├── gate-scenarios.mjs   # 场景自测薄入口 → tests/scenarios/
@@ -164,7 +176,7 @@ cursor/                       # 适配 Cursor 的完整规约根（目录名任�
 
 ## 技术栈扩展
 
-系统架构师在 `docs/design/gated-artifacts.json`（可选）中声明本项目额外受门禁保护的路径与初始化命令，Hook 会与 `harness.config.json` 默认项合并。
+系统架构师在 `docs/design/gated-artifacts.json`（可选）中声明本项目额外受门禁保护的路径与初始化命令，Hook 会与 `harness.config.json` 默认项合并。该文件**仅 system-architect 可写**（R29 加强），且只合并**收紧型**字段——放松门禁须由用户本人改 `harness.config.json`。
 
 模板见 `.cursor/templates/gated-artifacts.json`。
 
@@ -176,7 +188,7 @@ Feature 迭代时，对应文件位于 `docs/{feature-名称}/design/gated-artif
 - **根目录/基础设施门禁**：`.cursor/harness.config.json` → `gatedPaths.rootPatterns`
 - **代码扩展名默认门禁（R6 加强）**：凡代码扩展名一律受门禁，无需逐个声明目录名；仅 `gatedPaths.extensionGateExemptDirs`（`node_modules`/`dist`/`target`/`.venv`/`test-results` 等依赖与构建产物目录）豁免。这解决了旧版仅靠 `sourceDirs` 目录名白名单时，`Sources/`（Swift）、`myapp/`（Python 根包）、`MyApp/`（.NET）、`functions/`（Serverless）、根目录 `main.py` 等主流布局完全不受门禁的问题
 - **`.cursor/` 内部治理门禁（R6）**：`.cursor/scripts|agents|hooks/**` 三目录默认纳入机制门禁；白名单豁免见 `gatedPaths.dotCursorExemptPatterns`（模板/rules/运行时状态/hooks 与 config 注册文件/工具链批准标记）
-- **门禁自治（R29）**：`hooks.json`、`harness.config.json`、`AGENTS.md`、`harness/spec/**`、R5 运行时标记与工具链授权凭证**一律禁止 AI 写入**（含改用 Shell）——需要调整门禁时由 AI 呈现 diff、**由你本人编辑**。这是刻意选择 `deny` 而非「弹窗批准」：Cursor 的 `preToolUse` 目前不强制执行 `ask`，依赖它会使保护静默失效。`harness-state.json` 归项目经理。说明权威见 `.cursor/harness/spec/mechanical-gates.md` §8.5
+- **门禁自治（R29）**：`hooks.json`、`harness.config.json`、`AGENTS.md`、`harness/spec/**`、R5 运行时标记与工具链授权凭证**一律禁止 AI 写入**（含改用 Shell）；项目级的 `docs/**/design/gated-artifacts.json` 收敛为**仅 system-architect 可写**（它是 `harness.config.json` 的 merge 另一半，此前完全不受门禁），且其中的放松型字段 `extraExtensionGateExemptDirs` 不再被合并——需要调整门禁时由 AI 呈现 diff、**由你本人编辑**。这是刻意选择 `deny` 而非「弹窗批准」：Cursor 的 `preToolUse` 目前不强制执行 `ask`，依赖它会使保护静默失效。`harness-state.json` 归项目经理。说明权威见 `.cursor/harness/spec/mechanical-gates.md` §8.5
 - **Shell 写文件门禁（R28）**：写文件类命令按解析出的目标路径套用与 Write 同等判据；框架自带运行器豁免。§8.5
 - **身份基准有效期（R5 加强）**：`.cursor/harness.config.json` → `identity.baselineTtlHours`（默认 12）。超期基准由新会话首个 `subagentStart` 覆盖，避免陈旧值使顶层代写拦截永久失效
 - **回退上限（R31）**：`.cursor/harness.config.json` → `rollback.limit`（默认 3）。`process.md` 的 `## 回退计数` 中任一对象超限且未 `blocking` 时，stop 门禁注入 followup
@@ -224,8 +236,8 @@ flowchart TB
 | -- | ---- | ---------------- | -------- | ------ | -------- |
 | **A 宪章** | `AGENTS.md` | **是**（Cursor 根文件整份常驻） | 编排文字约束 + 索引 | 角色指针、R12、顶层 MUST/MUST NOT、回合自检、模式/门禁链**摘要**、禁止绕过 Hook、权威索引 | 公式展开、豁免字段表、Hook 能力边界长文 |
 | **B 机械** | `.cursor/hooks/**`、`.cursor/scripts/*-run.mjs`、`workflow-gate-lib.mjs` | 否（执行时强制） | **执行权威** | `gatePassed`、deny/followup、R3/R5/R6/R9–R11/R13–R23/R25/R28–R31/B1 等可机读判据（R24/R26/R27 为文字约束，见 rule-index） | 语义审查（命名是否合理、对账是否查到真数据等） |
-| **C 角色** | `.cursor/agents/*.md` | 仅该角色 Task 时 | **执行面权威** | PM 分诊/R2/R9/R10；QE 的 R15/R16 操作；TE 的 R14/R17/E2E/**R22**/R24 操作；SA 豁免声明与 **R26**；RA **R27**；RR/设计侧 **R25** 等 | 顶层代写禁令（仍在宪章）；与 Hook 冲突的「可跳过」说法 |
-| **D 说明** | `.cursor/harness/spec/*.md` | 否（人审 / 改门禁 / Agent 按需 Read） | **说明权威**（叙述 SSOT） | Hook 一览、stop 优先级、E2E/R14–R17 公式、双要素豁免表、无效成果物、模式细则、**§8.5 审核加固（R28–R31）** | 替代 Hook 执行（文档不能单独放宽） |
+| **C 角色** | `.cursor/agents/*.md` | 仅该角色 Task 时 | **执行面权威** | PM 分诊/R2/R9/R10；QE 的 R15/R16 操作；TE 的 R14/R17/E2E/**R22**/R24/**R32** 操作；SA 豁免声明与 **R26**；RA **R27**/**R33**；RR/设计侧 **R25** 等 | 顶层代写禁令（仍在宪章）；与 Hook 冲突的「可跳过」说法 |
+| **D 说明** | `.cursor/harness/spec/*.md` | 否（人审 / 改门禁 / Agent 按需 Read） | **说明权威**（叙述 SSOT） | Hook 一览、stop 优先级、E2E/R14–R17 公式、双要素豁免表、无效成果物、模式细则、**§8.5 审核加固（R28–R31）**、**§8.6 交付可用性与体验验收（R32–R33）**、**§8.7 机械层实际强度边界**、**§8.8 审核加固（R34–R38）** | 替代 Hook 执行（文档不能单独放宽） |
 | **E 提醒** | `.cursor/rules/*.mdc` | 否（`globs` 命中时） | 辅助提醒 | 编辑 `process.md` / 测试产物时的短指针 | `alwaysApply: true` 的编排硬约束副本（会漏挂载或重复占 token） |
 
 对照索引亦写在 `AGENTS.md` §3；编号导航见 `.cursor/harness/spec/rule-index.md`。
@@ -248,9 +260,17 @@ flowchart TB
 | 改 R5 顶层代写拦截 | `mechanical-gates.md` §8.1/§8.4 + `identity.mjs` / `role-path.mjs` | `gate-subagent-track` + scenarios `r5-conversation` |
 | 改 R21/R23 角色↔路径 / `e2e/**` | `mechanical-gates.md` §8.4 + `role-path.mjs` / `paths.mjs` | scenarios `r5-conversation` |
 | 改 R22 TE 替代启动冒烟 | `mechanical-gates.md` §8.4 + `qe.mjs` / `gate-dev-shell.mjs` | selftest/scenarios `te-smoke` |
+| 改 R32 生产启动冒烟 | `mechanical-gates.md` §8.6 + `startup-smoke-lib.mjs` / `startup-smoke-run.mjs` / `qe.mjs` / `dispatch.mjs` | selftest `r32-startup-smoke` + scenarios `startup-smoke` + vitest |
+| 改 R34 执行证明 | `mechanical-gates.md` §8.8 + `lib/execproof.mjs` / `evaluateGateArtifact`（`iteration.mjs`）/ `gate-dev-shell.mjs` / 各 `*-run.mjs` / `paths.mjs`（R29 登记） | selftest `r34-exec-proof` + scenarios `audit-fixes`（AF1–AF7） |
+| 改 R35 阻塞释放证据 | `mechanical-gates.md` §8.8 + `core.mjs`（`checkBlockingReleaseEvidence`）/ `gate-stop-workflow.mjs` / `templates/process.md` | selftest `r35-blocking-evidence` + scenarios `audit-fixes`（AF9–AF10） |
+| 改 R36 判定期异常策略 | `mechanical-gates.md` §8.4/§8.8 + `core.mjs`（`getGateExceptionPolicy` / `buildGateExceptionVerdict`）+ 五个 `gate-*.mjs` 入口 | selftest `r36-gate-exception` |
+| 改 R37 增量迭代档 | `workflow-modes.md`（唯一权威）+ `mechanical-gates.md` §8.2/§8.3/§8.8 + `iteration.mjs` / `dispatch.mjs` / `paths.mjs` / `templates/process.md` | selftest `r37-single-task` + scenarios `audit-fixes`（AF11–AF14） |
+| 改 R38 工具不可用分类 | `mechanical-gates.md` §8.8 + `tool-availability-lib.mjs` + 各运行器 lib + `iteration.mjs` / `qe.mjs` / `gate-stop-workflow.mjs` | selftest `r38-tool-unavailable` + scenarios `audit-fixes`（AF8） |
+| 改 R33 界面与交互期望确认 | `mechanical-gates.md` §8.6 + `iteration.mjs` + `requirements-analyst.md` | selftest `r33-ui-expectation` + scenarios `startup-smoke`（SS6/SS7） |
 | 改审核加固（R28–R31 / R5·R6 加强） | `mechanical-gates.md` §8.5 + `paths.mjs` / `core.mjs` / `identity.mjs` | selftest `r28-r31-hardening` · scenarios `hardening` |
 | 跑 QE（lint / 静态扫描） | `quality-engineer.md` | `mechanical-gates.md` §8.2 |
-| 跑测试 / E2E / R14 / R17 | `test-engineer.md` | `mechanical-gates.md` §8.3 |
+| 跑测试 / E2E / R14 / R17 / R32 启动冒烟 | `test-engineer.md` | `mechanical-gates.md` §8.3 / §8.6 |
+| 澄清界面与交互期望（R33） | `requirements-analyst.md` §1.3.1 | `mechanical-gates.md` §8.6 |
 | 声明某门禁不适用 | `system-architect.md`（写 `gated-artifacts.json`） | 双要素表：`mechanical-gates.md` §8.2；PM 补用户确认 |
 | 复盘合规 | `.cursor/skills/project-retrospective/` | 上表对应权威路径 |
 
@@ -266,11 +286,11 @@ flowchart TB
 
 Harness 自带回归自测，用于在修改 Hook / 脚本 / 模板后验证门禁判定逻辑未被破坏（日常开发宿主项目时不必跑）：
 
-- **门禁逻辑自检（单元级）**：`node .cursor/scripts/gate-selftest.mjs`（薄入口；用例按规则拆在 `.cursor/scripts/tests/selftest/`，见该目录 README。纯 Node；覆盖 R3 / R5 / R6 / B1 / R9 / R10 / R11 / R13 / R14 / R15 / R16 / R17 / R18 / R19 / **R20** / **R22**（`te-smoke.mjs`）/ **R25** / **R28–R31 及 R5·R6 加强项**（`r28-r31-hardening.mjs`）最低必测集及 Finding #1 回归，退出码非 0 即失败）。
-- **场景级门禁回归（端到端）**：`node .cursor/scripts/gate-scenarios.mjs`（薄入口；套件按场景拆在 `.cursor/scripts/tests/scenarios/`，见该目录 README。纯 Node）。它**真正 spawn 框架自己的 5 个可裁决 Hook 入口**（`gate-role-sequence` / `gate-dev-workflow` / `gate-dev-shell` / `gate-toolchain-install` / `gate-stop-workflow`；另有 `gate-subagent-track` 仅落盘顶层 `conversation_id`、恒放行，由 R5 场景间接覆盖），在隔离 fixture（`test-results/.gate-scenarios/`，经 `HARNESS_PROCESS_PATH` / `HARNESS_GATED_ARTIFACTS_PATH` 指向）上逐条断言 `allow/deny/ask/followup`，E2E 判据用 `e2e-run-lib.mjs` 真实计算；覆盖 Greenfield（含 **R19**、**R25** 同构模块识别）/ Feature / Hotfix（**R11** 折叠 + **R20** 确认）/ 对抗健壮性 / **R5** 顶层会话与角色↔路径（`r5-conversation`）/ **R22 TE 替代启动冒烟（`te-smoke`）** / R14 批次接口测试 / R15 lint / R16 静态扫描 / R17 存储对账 / **R18** 设计审核 / **审核加固项 R28–R31 与 R5·R6 加强（`hardening`）** / Finding #1 与 Finding #2 回归，退出码非 0 即失败。附 `--verbose` 打印每步 deny/ask/followup 首行原因。
-  - **定位**：此套件是**规约框架自身的维护用回归测试**，由早期一次性评估探针（原 `eval/`）沉淀而来；它**不参与任何宿主项目的开发流程**，不被 `hooks.json` / `qe-run.mjs` / `lint-run.mjs` / `static-scan-run.mjs` / `e2e-run.mjs` 引用，全程使用自建隔离 fixture，运行前会快照、运行后会还原 `test-results/e2e/`、`test-results/qe/.lint-result.json`、`test-results/qe/.static-scan-result.json`、R5 运行时标记（`.root-conversation-id.json` / `.dispatched-roles.json`）等产物，不改动 `docs/` 成果物。
+- **门禁逻辑自检（单元级）**：`node .cursor/scripts/gate-selftest.mjs`（薄入口；用例按规则拆在 `.cursor/scripts/tests/selftest/`，见该目录 README。纯 Node；覆盖 R3 / R5 / R6 / B1 / R9 / R10 / R11 / R13 / R14 / R15 / R16 / R17 / R18 / R19 / **R20** / **R22**（`te-smoke.mjs`）/ **R25** / **R28–R31 及 R5·R6 加强项**（`r28-r31-hardening.mjs`）/ **R32**（`r32-startup-smoke.mjs`）/ **R33**（`r33-ui-expectation.mjs`）最低必测集及 Finding #1 回归，退出码非 0 即失败）。另含两套 2026-07-29 审核补齐的套件：**出厂模板 ↔ 出厂门禁一致性**（`templates-vs-gates.mjs`，加载 `.cursor/templates/` 真实文件而非自拼夹具；新增「Hook 解析某章节」的规则时**须在其 `PARSED_SECTIONS` 表登记**）与 **`gated-artifacts.json` 角色门禁**（`gated-artifacts-config.mjs`）。
+- **场景级门禁回归（端到端）**：`node .cursor/scripts/gate-scenarios.mjs`（薄入口；套件按场景拆在 `.cursor/scripts/tests/scenarios/`，见该目录 README。纯 Node）。它**真正 spawn 框架自己的 5 个可裁决 Hook 入口**（`gate-role-sequence` / `gate-dev-workflow` / `gate-dev-shell` / `gate-toolchain-install` / `gate-stop-workflow`；另有 `gate-subagent-track` 仅落盘顶层 `conversation_id`、恒放行，由 R5 场景间接覆盖），在隔离 fixture（`test-results/.gate-scenarios/`，经 `HARNESS_PROCESS_PATH` / `HARNESS_GATED_ARTIFACTS_PATH` 指向）上逐条断言 `allow/deny/ask/followup`，E2E 判据用 `e2e-run-lib.mjs` 真实计算；覆盖 Greenfield（含 **R19**、**R25** 同构模块识别）/ Feature / Hotfix（**R11** 折叠 + **R20** 确认）/ 对抗健壮性 / **R5** 顶层会话与角色↔路径（`r5-conversation`）/ **R22 TE 替代启动冒烟（`te-smoke`）** / **R32 生产启动冒烟与 R33 界面期望确认（`startup-smoke`，SS0–SS7）** / R14 批次接口测试 / R15 lint / R16 静态扫描 / R17 存储对账 / **R18** 设计审核 / **审核加固项 R28–R31 与 R5·R6 加强（`hardening`）** / Finding #1 与 Finding #2 回归，退出码非 0 即失败。附 `--verbose` 打印每步 deny/ask/followup 首行原因。
+  - **定位**：此套件是**规约框架自身的维护用回归测试**，由早期一次性评估探针（原 `eval/`）沉淀而来；它**不参与任何宿主项目的开发流程**，不被 `hooks.json` / `qe-run.mjs` / `lint-run.mjs` / `static-scan-run.mjs` / `e2e-run.mjs` 引用，全程使用自建隔离 fixture，运行前会快照、运行后会还原 `test-results/e2e/`（含 R32 的 `.startup-smoke-result.json`）、`test-results/qe/.lint-result.json`、`test-results/qe/.static-scan-result.json`、R5 运行时标记（`.root-conversation-id.json` / `.dispatched-roles.json`）等产物，不改动 `docs/` 成果物。
   - **何时运行**：改动任一 Hook、`workflow-gate-lib.mjs`、`e2e-run-lib.mjs`、门禁相关脚本或 `.cursor/templates/process.md` 后，先跑 `gate-selftest.mjs` 再跑 `gate-scenarios.mjs`；两者全绿方可提交（呼应 AGENTS.md R12「只可加强，不可放松」——回归失败即意味着门禁被意外放松/破坏）。
-- **`e2e-run-lib` 单测**：`.cursor/scripts/e2e-run-lib.test.ts` 使用 vitest（配置见 `.cursor/scripts/vitest.config.ts`）。本框架目录不预置 `package.json`，运行前需先在工作区安装 vitest，例如：
+- **纯函数单测**：`.cursor/scripts/e2e-run-lib.test.ts` 与 `.cursor/scripts/startup-smoke-lib.test.ts` 使用 vitest（配置见 `.cursor/scripts/vitest.config.ts`）。本框架目录不预置 `package.json`，运行前需先在工作区安装 vitest，例如：
 
 ```bash
 npm i -D vitest

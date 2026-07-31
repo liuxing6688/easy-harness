@@ -6,20 +6,17 @@
  * 见 `.cursor/harness/spec/mechanical-gates.md` §8.5「审核加固项」。
  */
 import {
-  test, fixtureProcess, assert, path,
-  decodeTextBuffer, readTextFileSafe, readJsonFileSafe, parseProcessFrontmatter,
-  isCancelledProcessFile, isProcessBlocked, getWorkflowMode,
+  test, fixtureProcess, assert, path, decodeTextBuffer, readTextFileSafe, readJsonFileSafe,
+  parseProcessFrontmatter, isCancelledProcessFile, isProcessBlocked, getWorkflowMode,
   isGatedDevPath, isGatedRoleArtifactPath, expectedRolesForPath, isHarnessStatePath,
-  classifyHarnessSelfGovernedPath, harnessSelfGovernedVerdict,
-  classifyShellWriteIntent, extractShellPathCandidates,
-  hasToolchainInstallApproval, hashCommandForApproval,
+  classifyHarnessSelfGovernedPath, harnessSelfGovernedVerdict, classifyShellWriteIntent,
+  extractShellPathCandidates, hasToolchainInstallApproval, hashCommandForApproval,
   recordRootConversationId, readRootConversationId, readRootConversationRecord,
   isRootConversationBaselineStale, isRootConversationBaselineExpired, inspectIdentityBaseline,
-  parseRollbackCounts, checkRollbackLimit, getRollbackLimit,
-  writeEncodedFixture, snapshotRootConversationState, restoreRootConversationState,
-  clearRootConversationState, writeRootConversationState,
-  snapshotToolchainMarker, restoreToolchainMarker, writeToolchainMarker, clearToolchainMarker,
-  FIXTURE_ROOT, PROJECT_ROOT,
+  parseRollbackCounts, checkRollbackLimit, getRollbackLimit, writeEncodedFixture,
+  snapshotRootConversationState, restoreRootConversationState, clearRootConversationState,
+  writeRootConversationState, snapshotToolchainMarker, restoreToolchainMarker,
+  writeToolchainMarker, clearToolchainMarker, FIXTURE_ROOT, PROJECT_ROOT,
 } from './_harness.mjs';
 
 const CANCELLED_PROCESS = [

@@ -5,10 +5,9 @@
  * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
  */
 import {
-  test, fixtureProcess, cleanup, assert,
-  isAlternativeE2eStartupCommand, isAlternativeE2eStartupExempt, checkTeAlternativeE2eStartup,
-  recordDispatchedRole, clearDispatchedRoles, snapshotDispatchedRoles, restoreDispatchedRoles,
-  FIXTURE_ROOT, path, fs,
+  test, fixtureProcess, cleanup, assert, isAlternativeE2eStartupCommand,
+  isAlternativeE2eStartupExempt, checkTeAlternativeE2eStartup, recordDispatchedRole,
+  clearDispatchedRoles, snapshotDispatchedRoles, restoreDispatchedRoles, FIXTURE_ROOT, path, fs,
 } from './_harness.mjs';
 
 function writeFixtureGated(name, obj) {

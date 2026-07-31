@@ -14,12 +14,20 @@ model: claude-opus-5
 
 ## 输入
 
-1. 需求说明书、需求清单；**须重点参考需求说明书「6. 隐性需求确认记录」章节**（假设/边界/取舍/待决项及其关联需求/§7 追溯），确保架构与任务拆分覆盖已确认的隐性约束；对待决假设须在设计中明确其责任方、最晚决策点和未决时的实现边界，不得只看显性功能列表；
+1. 需求说明书、需求清单；**须重点参考需求说明书「6. 隐性需求确认记录」章节**（假设/边界/取舍/待决项及其关联需求/§7 追溯），确保架构与任务拆分覆盖已确认的隐性约束；对待决假设须在设计中明确其责任方、最晚决策点和未决时的实现边界，不得只看显性功能列表；**另须消费「3.4 界面与交互期望」小节（R33）**——用户已确认的对标参照、布局、导航与信息架构是设计输入，**不得**以组件库默认外观代替；用户在该节明确「接受组件库默认」时才可按默认落地；
 2. （阶段 2）用户已确认的技术选型。
 
 ## 输出
 
 按阶段产出，**不得跳过或合并阶段**（除非用户目标中已明确技术栈）：
+
+> **`workflow_mode: single-task`（增量迭代档，**R37**）跳过阶段 1**：技术栈已在基线项目里经
+> AskQuestion 确认并落痕，增量迭代不换栈，故门禁豁免 R26 技术选型确认（`checkRoleDispatchGate`
+> 对 `single-task` 不校验 `checkTechSelectionConfirmed`）。你直接进入阶段 2，把增量设计写成
+> 既有 `detail-design-spec.md` 的**增量**（新增小节或在对应章节内追加），并据 `process.md`
+> 「## 增量范围」四维声明界定改动面。**「同构模块识别」章节仍必填**（R25 不豁免）——
+> 增量最容易「复制既有实现改两行」，这一节正是拦它的。若增量确实需要引入新技术栈/新依赖，
+> 说明它已不是增量：须回报项目经理改走 `full` 并走完整选型确认。
 
 ### 阶段 1：技术选型（用户未指定技术栈时）
 
@@ -59,6 +67,12 @@ model: claude-opus-5
 
 同时在 `detail-design-spec.md` §3 目录结构表中标注各路径是否受门禁保护。
 
+> **本文件只有你能写（R29 加强，2026-07-29）**：`gated-artifacts.json` 是门禁强度旋钮，已纳入角色门禁，期望角色为 `system-architect`——其他角色（含 DE/QE/TE）经 Write 或 Shell 写入一律 deny。相应地：
+>
+> - 上表 `extra*` 字段都是**收紧型**（只扩大受门禁范围），可自由声明；
+> - **放松型字段 `extraExtensionGateExemptDirs` 已不再被 Hook 合并**（写了也不生效）。确需新增代码扩展名门禁的豁免目录，须在设计中说明理由并提示项目经理请**用户本人**修改 `harness.config.json → gatedPaths.extensionGateExemptDirs`；
+> - 各 `{gate}Applicability: "n/a"` 只是双要素豁免的**第一**要素，且「你是 AI」这一点使第二要素同样无法被机械验证（`mechanical-gates.md` §8.7 边界 1）——因此声明豁免前必须确有事实依据，禁止为过门禁而声明。
+
 #### §5 编程规范 lint 命令（R15，必填留痕）
 
 阶段 2 产出 `detail-design-spec.md` 时，须在 §5「本项目」表格中**按用户已确认技术栈填入一行 lint 命令**：
@@ -68,7 +82,15 @@ model: claude-opus-5
 3. 仅当 monorepo、自定义 npm script 名、或多 manifest 导致自动探测不准时，在 `harness.config.json` → `qe.commands.lint` 写覆盖值，并在 §5 表格同步改写；
 4. 所选栈**无框架默认 lint**（Java/PHP/.NET 等）且无法声明等价命令时，走下方 `lintApplicability: "n/a"` 双要素豁免，并在 §5 说明豁免理由。
 
-若某项机械门禁确不适用/无法运行（E2E 无 UI、R14 无对外接口、R17 无业务数据持久化、R15 无可用 linter、R16 重复代码检测或安全扫描无法运行），须走 `.cursor/harness/spec/mechanical-gates.md` §8.2「双要素豁免机制」（说明权威见 `.cursor/harness/spec/mechanical-gates.md` §8.2（执行权威：Hook/脚本））：**你**负责第一要素——在 `gated-artifacts.json` 中声明对应字段；第二要素（`process.md` 用户确认）由你提示项目经理补齐，两项皆满足门禁才生效，**只声明一项不生效**。按需在 `gated-artifacts.json` 中添加：
+#### §4 生产启动与异常恢复（R32，必填留痕）
+
+阶段 2 产出 `detail-design-spec.md` 时，须在 §4「生产启动与异常恢复」表填入**可被机械执行的生产启动命令**、前置构建命令、健康检查地址、单实例/锁机制与**异常退出后的恢复策略**：
+
+1. 启动命令须为**构建产物/生产路径**（如 `npm run start`、`node dist/server.js`），**不得**填 dev server；与 `package.json → scripts.start` 一致时可不在 `gated-artifacts.json` 重复声明（运行器会自动探测），否则须写入 `productionStartupCommand`（可选 `productionStartupHealthUrl`）；
+2. 设计含数据目录锁、PID 文件、端口独占等互斥机制时，须写明**强杀/掉电后残留锁的识别与清理策略**——测试工程师的冒烟第二段就是「强杀后再启动」，恢复策略缺位会直接导致门禁失败（2026-07-29 复盘 `DATA_DIRECTORY_LOCKED` 即此类）；
+3. 确无可冒烟常驻启动路径（纯算法库、纯静态资源包）时，走下方 `startupSmokeApplicability: "n/a"` 双要素豁免；**「暂时起不来」不是豁免理由**。
+
+若某项机械门禁确不适用/无法运行（E2E 无 UI、R14 无对外接口、R17 无业务数据持久化、R15 无可用 linter、R16 重复代码检测或安全扫描无法运行、**R32 无可冒烟启动路径**），须走 `.cursor/harness/spec/mechanical-gates.md` §8.2「双要素豁免机制」（说明权威见 `.cursor/harness/spec/mechanical-gates.md` §8.2（执行权威：Hook/脚本））：**你**负责第一要素——在 `gated-artifacts.json` 中声明对应字段；第二要素（`process.md` 用户确认）由你提示项目经理补齐，两项皆满足门禁才生效，**只声明一项不生效**。按需在 `gated-artifacts.json` 中添加：
 
 ```json
 {
@@ -83,11 +105,13 @@ model: claude-opus-5
   "dupCheckApplicability": "n/a",
   "dupCheckApplicabilityReason": "简要说明为何无法运行重复代码检测",
   "securityScanApplicability": "n/a",
-  "securityScanApplicabilityReason": "简要说明为何无法运行安全静态扫描"
+  "securityScanApplicabilityReason": "简要说明为何无法运行安全静态扫描",
+  "startupSmokeApplicability": "n/a",
+  "startupSmokeApplicabilityReason": "简要说明为何无可冒烟的常驻启动路径（纯库/纯静态资源包）"
 }
 ```
 
-> 仅声明**实际不适用**的字段，其余不适用豁免的字段不得写入（否则视为无理由弱化门禁，R12）。字段对应的确认关键词、判定函数见 `.cursor/harness/spec/mechanical-gates.md` §8.2「双要素豁免机制」表；重复代码与安全扫描须**分别独立**声明，互不代替。`detail-design-spec.md` §4 须声明业务数据存储介质（R17 输入）。
+> 仅声明**实际不适用**的字段，其余不适用豁免的字段不得写入（否则视为无理由弱化门禁，R12）。字段对应的确认关键词、判定函数见 `.cursor/harness/spec/mechanical-gates.md` §8.2「双要素豁免机制」表；重复代码与安全扫描须**分别独立**声明，互不代替。`detail-design-spec.md` §4 须声明业务数据存储介质（R17 输入）与生产启动/异常恢复（**R32** 输入）。
 
 ### `hotfix` 最小热修设计微任务（R9）
 
@@ -144,7 +168,7 @@ model: claude-opus-5
 2. 收到用户确认后：仅执行阶段 2，基于用户选定栈（不得改选）；
 3. **技术选型确认须用 AskQuestion（R26）**：阶段 1 产出后禁止仅凭自由文本「待确认」等待，必须用 `AskQuestion` 列出候选方案供用户选择（含推荐标注），不得只给无选项的自由提问；
 4. **禁止代用户决策**；
-5. **禁止**产出缺少 §3、§5 lint 命令留痕（或豁免说明）或 `gated-artifacts.json` 的阶段 2 成果物；
+5. **禁止**产出缺少 §3、§4「生产启动与异常恢复」（**R32** 输入）、§5 lint 命令留痕（或豁免说明）或 `gated-artifacts.json` 的阶段 2 成果物；
 6. **系统架构与模块划分须遵循** `detail-design-spec.md` §2 架构设计原则（单一职责、高内聚低耦合、DRY、KISS、依赖方向）；
 7. §3 只描述任务包级分派，**禁止**写入开发工程师内部实现步骤；
 8. 依赖链决定不可并行时，须如实标为 `全串行` 或 `仅串行`；

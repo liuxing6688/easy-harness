@@ -10,6 +10,8 @@ import {
   SCEN_ROOT, snapshotE2e, restoreE2e, snapshotLint, restoreLint,
   snapshotStaticScan, restoreStaticScan, snapshotRootConversation, restoreRootConversation,
   snapshotRecon, restoreRecon, snapshotDispatchedRoles, restoreDispatchedRoles,
+  snapshotStartupSmoke, restoreStartupSmoke, writeStartupSmokePass,
+  snapshotExecProofState, restoreExecProofState,
   ensureScenarioReconEvidence, getScenarioStats,
 } from './_harness.mjs';
 import { greenfieldScenarios } from './greenfield.mjs';
@@ -21,7 +23,9 @@ import { adversarialScenarios } from './adversarial.mjs';
 import { r5ConversationScenarios } from './r5-conversation.mjs';
 import { finding1Scenario } from './finding1.mjs';
 import { teSmokeScenarios } from './te-smoke.mjs';
+import { startupSmokeScenarios } from './startup-smoke.mjs';
 import { hardeningScenarios } from './hardening.mjs';
+import { auditFixesScenarios } from './audit-fixes.mjs';
 
 fs.rmSync(SCEN_ROOT, { recursive: true, force: true });
 snapshotE2e();
@@ -30,7 +34,13 @@ snapshotStaticScan();
 snapshotRootConversation();
 snapshotRecon();
 snapshotDispatchedRoles();
+snapshotStartupSmoke();
+// R34：套件会真实签发 nonce 到 `.cursor/hooks/`（台账 + 私钥交接目录），须快照还原。
+snapshotExecProofState();
 ensureScenarioReconEvidence();
+// R32：默认让全部套件处于「冒烟已通过」基线，只有 startup-smoke 套件会主动构造失败态
+// （与 ensureScenarioReconEvidence 同思路，避免在每个既有套件里散落一行 fixture）。
+writeStartupSmokePass();
 try {
   greenfieldScenarios();
   featureScenarios();
@@ -40,7 +50,9 @@ try {
   adversarialScenarios();
   r5ConversationScenarios();
   teSmokeScenarios();
+  startupSmokeScenarios();
   hardeningScenarios();
+  auditFixesScenarios();
   finding1Scenario();
 } finally {
   restoreE2e();
@@ -49,6 +61,8 @@ try {
   restoreRootConversation();
   restoreRecon();
   restoreDispatchedRoles();
+  restoreStartupSmoke();
+  restoreExecProofState();
   fs.rmSync(SCEN_ROOT, { recursive: true, force: true });
 }
 

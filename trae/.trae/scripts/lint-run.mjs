@@ -7,8 +7,9 @@
  * 纯函数判据见 `./lint-run-lib.mjs`；Hook 侧读取见 `workflow-gate-lib` → `readLintResult()`。
  *
  * 命令解析优先级：`harness.config.json` → `qe.commands.lint` 覆盖 > 栈默认值。
- * 产物：`test-results/qe/.lint-result.json`（`gatePassed`）。
+ * 产物：`test-results/qe/.lint-result.json`（`gatePassed` + **R34** `execProof` 执行证明）。
  *   gatePassed=true 仅当「有 lint 命令且退出码为 0」；无命令时 gatePassed=false。
+ *   **R38**：失败区分 `lint-tool-unavailable`（工具/依赖不可用）与 `lint-failed`（真有问题）。
  * 消费方：`gate-stop-workflow` / `gate-role-sequence`（不得在 lint 未通过时推进 TE）。
  *
  * 用法：
@@ -19,6 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { resolveLintCommand, computeLintGate } from './lint-run-lib.mjs';
+import { attachExecutionProof } from '../hooks/lib/execproof.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -118,7 +120,7 @@ function main() {
     output = run.output;
   }
 
-  const gate = computeLintGate({ command, exitCode });
+  const gate = computeLintGate({ command, exitCode, output });
   const result = {
     ...gate,
     stack: stack ?? 'unknown',
@@ -128,6 +130,8 @@ function main() {
     executedAt: new Date().toISOString(),
   };
 
+  // R34：落签须在写盘之前，且签名覆盖上面全部字段（含 gatePassed）。
+  attachExecutionProof('lint', result);
   writeResult(result);
   // 控制台省略 output，避免刷屏；完整输出已在产物文件中。
   console.log(JSON.stringify({ ...result, output: undefined }, null, 2));

@@ -13,6 +13,7 @@ Phase 1 对照本清单逐项打勾并记录证据。结论：`✓` 合规 / `�
 | A5 | `## 用户目标` 记录完整 | process 模板 |
 | A6 | 须确认事项均在 `## 用户确认记录` 留痕 | `.trae/harness/spec/gate-chain.md` |
 | A7 | hotfix 且 `hotfix_p0_impact: none` 时，「## 用户确认记录」含「hotfix影响面」判断依据行 | `.trae/harness/spec/gate-chain.md` R9 |
+| A8 | R33：「## 用户确认记录」含**独立**的「界面与交互期望」确认行（或明确「接受组件库默认外观」/「无 UI 不适用」）；**技术选型/组件库确认行不算** | `mechanical-gates.md` §8.6 R33 |
 
 ## B. 成果物门禁链（按 workflow_mode）
 
@@ -25,6 +26,8 @@ Phase 1 对照本清单逐项打勾并记录证据。结论：`✓` 合规 / `�
 | B3 | 技术选型经用户确认（`## 用户确认记录` 含技术选型/技术栈确认行，R18 机读） | `.trae/harness/spec/gate-chain.md` 无效成果物 |
 | B4 | `design-problem-list.md` 设计审核已通过（R18：12 维+可修复字段+P0 覆盖矩阵含验收标准+审核结论通过/复审通过） | `.trae/harness/spec/gate-chain.md`、R18 |
 | B5 | 四件成果物在 `process.md` 中被引用（R3） | `.trae/harness/spec/gate-chain.md`、R3 |
+| B5a | R33：`requirement-spec.md`「3.4 界面与交互期望」已按用户确认逐维填写（含非目标与 §7 追溯）；若目标点名竞品，「像什么/像到什么程度」已钉死为功能/流程/外观 | `mechanical-gates.md` §8.6 R33、requirement-spec 模板 |
+| B5b | R32：`detail-design-spec.md` §4「生产启动与异常恢复」已填生产启动命令、健康检查、单实例/锁机制与异常退出恢复策略（非 dev server） | `mechanical-gates.md` §8.6 R32、detail-design-spec 模板 |
 
 ### hotfix
 
@@ -39,6 +42,17 @@ Phase 1 对照本清单逐项打勾并记录证据。结论：`✓` 合规 / `�
 | # | 检查项 | 规约依据 |
 | --- | ------ | -------- |
 | B9 | 无业务源码写入；仅 `docs/**/*.md` | `.trae/harness/spec/workflow-modes.md` |
+
+### single-task（增量迭代档）
+
+| # | 检查项 | 规约依据 |
+| --- | ------ | -------- |
+| B10 | 基线 `detail-design-spec.md` 在进入开发前已存在（不是本次从零写的） | R37 |
+| B11 | `## 增量范围` 四维齐全、「是否涉及」为是/否、「说明」有实质内容 | R37 |
+| B12 | 增量范围声明与**实际改动**相符（抽查 git diff：声明「不涉及接口」却新增了端点属虚假声明） | R37 |
+| B13 | 未涉及数据模型 / schema 变更（若实际改了 schema 但声明「否」，属严重违规） | R37 |
+| B14 | 测试按单轮通道执行，且该轮 R14 接口测试 + R17 存储对账 + R32 启动冒烟齐备（**不得**照搬 hotfix R11 的跳过） | R37 |
+| B15 | 增量设计由 system-architect 产出，非 PM 代写 | R2 / R37 |
 
 ## C. 项目经理编排
 
@@ -81,6 +95,9 @@ Phase 1 对照本清单逐项打勾并记录证据。结论：`✓` 合规 / `�
 | E9 | 接口测试豁免留痕（若适用）：`apiTestApplicability` + 用户确认 | R14、`.trae/harness/spec/mechanical-gates.md` §8.2 |
 | E10 | 批次测试报告含非空「## 存储对账记录」且适用分类型行/至少一条适用行/描述列/介质/其他与不适用备注/批次任务包覆盖机读通过，或已双要素豁免 | R17、`.trae/harness/spec/mechanical-gates.md` §8.3 |
 | E11 | 存储对账豁免留痕（若适用）：`storageReconciliationApplicability` + 用户确认 | R17、`.trae/harness/spec/mechanical-gates.md` §8.2 |
+| E12 | R32：`.startup-smoke-result.json` 存在且 `gatePassed=true`，含 `restartAfterKill.passed=true`（强杀后再启动段），`capturedAt` 未超新鲜度上限；**批次与最终两级（含 hotfix 折叠通道）** | R32、`mechanical-gates.md` §8.6 |
+| E13 | R32：测试报告含「## 生产启动冒烟」章节，逐段记录启动命令/命令来源/健康检查/结果；启动命令与 design §4 声明一致 | R32、test-report 模板 |
+| E14 | R32/R22：无「已知生产启动失败却标非阻塞收尾」，无用替代启动命令（`E2E_WEB_SERVER_COMMAND` / `vite-node`）保绿；启动冒烟豁免留痕（若适用）：`startupSmokeApplicability` + 用户确认，且**不是**用于掩盖「暂时起不来」 | R32、R22、`rollback.md` |
 
 ## F. 顶层代理与 Hook（证据：日志、git、对话）
 
@@ -91,6 +108,11 @@ Phase 1 对照本清单逐项打勾并记录证据。结论：`✓` 合规 / `�
 | F3 | 无 Hook 拒绝后换工具绕过 | `AGENTS.md` §5.16 |
 | F4 | 工具链安装经用户确认与批准标记 | `AGENTS.md` §5.17 |
 | F5 | Task 未附加 `model` 覆盖 | `AGENTS.md` §5.3 |
+| F6 | **R34 执行证明**：五项机读产物的 `execProof.nonce` 非空、`reason` 未标 `no-issued-nonce`；无手工编辑 `test-results/**` 的痕迹（抽查 `execProof.signedAt` 与 `executedAt`/`capturedAt` 是否同批、是否存在「产物比运行器最后一次执行更新」的时间倒挂） | R34、§8.7 边界 2 |
+| F7 | **R34 反向抽查**：若某轮门禁曾报 `exec-proof-*`，后续是**重跑运行器**解决的，而非改了产物或关掉 `execProof.enforce`（后者只能由用户改，须有对话证据） | R34、R12 |
+| F8 | **R35 阻塞证据**：每次 `blocking: true` 都有实质「## 阻塞原因」+「## 用户确认记录」阻塞决策留痕（或来自 Hook 的 `## 门禁异常事件`）；抽查该留痕行与**实际对话**是否对得上——机读只能证明写了，不能证明问了 | R35、§8.7 边界 1/4 |
+| F9 | **R36 判定期异常**：`## 门禁异常事件` 的「待处理」行都已真正修复（不是靠 `gateException.onJudgmentError: "allow"` 绕过）；若确实改了该配置，须为**用户本人**所改且有对话证据 | R36、R29 |
+| F10 | **R38 工具不可用**：产物曾标 `toolUnavailable` 时，处置路径是「PM 标 blocking + AskUserQuestion 请用户决策」，**不是**回派 DE 整改不存在的缺陷、也不是编造违规项来「解释」失败 | R38 |
 
 ## G. 文档与规约一致性
 

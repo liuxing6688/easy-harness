@@ -10,6 +10,7 @@
  * 须配置覆盖或走双要素豁免（lintApplicability:"n/a" + 用户确认）。
  * detail-design-spec §5 仅为文档留痕，不作为 Hook 输入。
  */
+import { applyToolAvailability } from './tool-availability-lib.mjs';
 
 /** 各技术栈默认 lint 命令（与 qe-run.mjs 保持一致的取值口径；空串表示该栈默认无 lint） */
 export const STACK_LINT_COMMANDS = {
@@ -42,15 +43,24 @@ export function resolveLintCommand({ stack = null, override = null } = {}) {
 
 /**
  * 计算 lint 门禁判定。gatePassed = 有命令且退出码为 0。
- * @param {{ command: string|null, exitCode: number|null }} params
- * @returns {{ gatePassed: boolean, reason: string }}
+ *
+ * **R38**：传入 `output` 时，失败会进一步区分「工具不可用」（`lint-tool-unavailable`，
+ * 如 linter 未安装 / 依赖拉取失败）与「真的有 lint 问题」（`lint-failed`）。两者都
+ * **不放行**门禁，但门禁给出的解法完全不同（见 `tool-availability-lib.mjs`）。
+ *
+ * @param {{ command: string|null, exitCode: number|null, output?: string }} params
+ * @returns {{ gatePassed: boolean, reason: string, toolUnavailable?: boolean }}
  */
-export function computeLintGate({ command, exitCode }) {
+export function computeLintGate({ command, exitCode, output = '' }) {
   if (!command) {
     return { gatePassed: false, reason: 'no-lint-command' };
   }
   if (exitCode === 0) {
     return { gatePassed: true, reason: 'passed' };
   }
-  return { gatePassed: false, reason: 'lint-failed' };
+  return applyToolAvailability(
+    { gatePassed: false, reason: 'lint-failed' },
+    { exitCode, output },
+    'lint-tool-unavailable',
+  );
 }

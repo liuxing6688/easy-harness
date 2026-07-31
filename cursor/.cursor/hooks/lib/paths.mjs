@@ -14,6 +14,7 @@ import {
   readJsonFileSafe,
   readProcessMd,
   readProcessMdAtPath,
+  getActiveProcessPath,
   parseProcessFrontmatter,
   getWorkflowMode,
   hasValidDispatchPlan,
@@ -30,7 +31,12 @@ import {
   CODE_EXTENSIONS,
   normalizePath
 } from './core.mjs';
-import { checkIterationArtifacts, checkHotfixDesign } from './iteration.mjs';
+import {
+  checkIterationArtifacts,
+  checkHotfixDesign,
+  checkSingleTaskPreconditions,
+} from './iteration.mjs';
+import { checkHotfixP0Impact } from './design.mjs';
 
 // ---------------------------------------------------------------------------
 // R10：流程终止（不可逆取消）
@@ -41,6 +47,55 @@ export function isProcessFilePath(filePath) {
   const p = normalizePath(filePath);
   if (!p) return false;
   return /(^|\/)docs\/(.+\/)?process\/process\.md$/.test(p);
+}
+
+/**
+ * 是否为**当前活跃**的那一份 process.md（与 `isProcessFilePath` 的区别：后者匹配任意
+ * feature 目录下的 `process/process.md`，含历史流程文件）。
+ *
+ * 供 **R36** 修复通道使用：判定期异常时开的口子必须只对「正在用的那份流程文件」开，
+ * 否则 `docs/archived-2020/process/process.md` 这类任意历史路径也能触发例外。
+ * 活跃指针本身解析失败时返回 `false`（宁可不给例外，由调用方决定兜底口径）。
+ */
+export function isActiveProcessFilePath(filePath) {
+  if (!isProcessFilePath(filePath)) return false;
+  try {
+    return normalizePath(filePath) === normalizePath(getActiveProcessPath());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * **R36**：解析本次写入调用可享受「流程文件修复例外」的路径集（空数组 = 不给例外）。
+ *
+ * 2026-07-30 复核复现的绕过：历史实现是 `filePaths.filter(isProcessFilePath)`，而
+ * `filePaths` 里混着从**写入内容**里解析出来的 ApplyPatch 目标路径。于是
+ * `Write { path: 'src/app.ts', content: '*** Update File: docs/process/process.md\n…' }`
+ * 就能凭空造出一个「修复路径」，再叠加「只要 repairPaths 非空就对整次调用放行」，
+ * 判定期异常一旦被触发（`gated-artifacts.json` 写个类型非法的收紧字段即可），
+ * 任意源码写入都能过。三处各自都不算漏洞，叠起来是一条完整通路。
+ *
+ * 故收窄为三个同时成立的条件：
+ * 1. 只认**直接路径字段**（`path` / `file_path` …）——从内容里解析出来的路径由代理
+ *    完全掌控，不能作为放行依据；ApplyPatch 因此拿不到例外（修流程文件请用 Write 类工具）。
+ * 2. 只认**活跃** process.md（`isActiveProcessFilePath`）。
+ * 3. 本次调用涉及的**全部**路径都必须是它——混写一律不给例外，杜绝「夹带」。
+ *
+ * 另限定工具类型：`Delete` 不在其列（异常态下允许删流程文件毫无必要，只增风险）。
+ *
+ * @param {{ toolName?: string, directPaths?: string[], allPaths?: string[] }} params
+ * @returns {string[]} 规范化后的放行路径；空数组表示按 fail-closed 正常拒绝
+ */
+export const GATE_REPAIR_TOOLS = Object.freeze(['write', 'strreplace', 'editnotebook']);
+
+export function resolveGateRepairPaths({ toolName, directPaths = [], allPaths = [] } = {}) {
+  const tool = String(toolName ?? '').toLowerCase().replace(/[_\s-]/g, '');
+  if (!GATE_REPAIR_TOOLS.includes(tool)) return [];
+  if (directPaths.length === 0) return [];
+  const candidates = [...directPaths, ...allPaths];
+  if (!candidates.every((p) => isActiveProcessFilePath(p))) return [];
+  return [...new Set(directPaths.map((p) => normalizePath(p)))];
 }
 
 /** 目标 process.md 自身（读取磁盘当前内容，而非活跃指针）是否已被标记为不可逆取消 */
@@ -97,12 +152,33 @@ export function assertDevGateOrDeny() {
     );
   }
 
+  // R37：single-task 增量档前置。与 R9 的写入期校验同理（见下方注释）——历史上 R9 只在 Task
+  // 发起期校验，导致「DE Task 被拒、但已在 DE 上下文里的写入照样放行」，故此处同步补齐纵深防御。
+  if (mode === 'single-task') {
+    const r37 = checkSingleTaskPreconditions(content);
+    if (!r37.ok) {
+      deny(
+        `流程门禁（R37 增量迭代档）：${r37.message ?? r37.reason}`,
+        `AGENTS.md R37 / workflow-modes.md：${r37.message ?? r37.reason}`,
+      );
+    }
+  }
+
   if (mode === 'hotfix') {
     const r9 = checkHotfixDesign(content);
     if (!r9.ok) {
       deny(
         '流程门禁（R9）：hotfix 前置校验未通过，detail-design-spec.md 不存在。',
         'AGENTS.md R9：hotfix 进入开发前须校验设计存在性；缺失须先由 system-architect 补最小热修设计微任务，禁止 PM/顶层代理代写设计。',
+      );
+    }
+    // R9 第 3 条（最小影响澄清）历史上只在 Task 发起期校验（checkRoleDispatchGate），
+    // 写入期缺失 ⇒ 「DE Task 被拒、但已在 DE 上下文里的写入照样放行」。补齐为纵深防御。
+    const p0 = checkHotfixP0Impact(content);
+    if (!p0.ok) {
+      deny(
+        `流程门禁（R9）：hotfix 最小影响澄清未完成——${p0.message ?? p0.reason}`,
+        'AGENTS.md R9 / gate-chain.md：hotfix 进入开发前须由项目经理向用户核验 P0 影响面并落盘（frontmatter hotfix_p0_impact 与「hotfix影响面」确认行），不得由开发工程师自行推断后直接改码。',
       );
     }
   }
@@ -163,6 +239,24 @@ export function isE2eTestPath(filePath) {
   return p === 'e2e' || p.startsWith('e2e/');
 }
 
+/**
+ * 架构师声明的项目级门禁配置 `docs/[{feature}/]design/gated-artifacts.json`。
+ *
+ * 它是**门禁强度旋钮**：`extra*` 收紧项、各门禁的 `{gate}Applicability: "n/a"`
+ * 豁免第一要素、`productionStartupCommand`（R32 解析优先级）都在其中。历史实现
+ * 把它整体排除在门禁之外（`isGatedDevPath` 直接 return false，且不在角色成果物
+ * 判据内），等于**任何角色、任何阶段都能改写门禁配置**——R29 精心锁死了
+ * `harness.config.json`，却放开了与之 merge 的另一半。
+ *
+ * 现纳入角色门禁：期望角色 `system-architect`（与「架构师维护该文件」的规约一致），
+ * 但仍不走 DE 分派计划 / R3 / R9（避免 SA 在开发前产出它时死锁）。
+ */
+export function isGatedArtifactsConfigPath(filePath) {
+  const p = normalizePath(filePath);
+  if (!p) return false;
+  return /(^|\/)docs\/(.+\/)?design\/gated-artifacts\.json$/.test(p);
+}
+
 /** 是否为受门禁约束的开发产物路径 */
 export function isGatedDevPath(filePath) {
   const p = normalizePath(filePath);
@@ -177,9 +271,11 @@ export function isGatedDevPath(filePath) {
     return isGatedDotCursorPath(p);
   }
 
-  // 架构师配置文件：docs/[{feature}/]design/gated-artifacts.json 需允许写入
-  // （它是门禁配置而非源码，否则与「架构师必须产出该文件」相互矛盾）
-  if (/(^|\/)docs\/(.+\/)?design\/gated-artifacts\.json$/.test(p)) return false;
+  // 架构师配置文件：docs/[{feature}/]design/gated-artifacts.json 不走 DE 源码门禁
+  // （它是门禁配置而非源码，若要求 DE 分派计划会与「架构师须在开发前产出该文件」互相矛盾），
+  // 但**不等于不受门禁**——它已纳入角色门禁，期望角色为 system-architect
+  // （见 isGatedArtifactsConfigPath / role-path.mjs expectedRolesForPath）。
+  if (isGatedArtifactsConfigPath(p)) return false;
 
   const gated = getMergedGatedPaths();
 
@@ -261,7 +357,18 @@ function isCodeExtensionGated(p, gated) {
 export const HARNESS_RUNTIME_MARKERS = Object.freeze([
   '.cursor/hooks/.root-conversation-id.json',
   '.cursor/hooks/.dispatched-roles.json',
+  // **R34**：执行证明台账（公钥 + nonce）。可写等于可自签任意 test-results 产物。
+  '.cursor/hooks/.exec-proof-ledger.json',
+  // **R35**：门禁异常事件旁路台账。可写等于可给自己伪造的「机器起源阻塞」补出处，
+  // 从而用一行表格解除 stop 门禁的全部推进判据。
+  '.cursor/hooks/.gate-exception-ledger.json',
 ]);
+
+/**
+ * **R34**：执行证明私钥交接目录。目录下文件名含随机 nonce，故用前缀匹配而非白名单。
+ * 代理写入该目录等于自签执行证明；删除等于把「私钥未被消费」这一作废条件抹掉。
+ */
+const EXEC_PROOF_PENDING_PREFIX = '.cursor/hooks/.exec-proof-pending';
 
 export const HARNESS_APPROVAL_MARKERS = Object.freeze([
   '.cursor/hooks/.toolchain-install-approved.json',
@@ -277,6 +384,9 @@ export function classifyHarnessSelfGovernedPath(filePath) {
   const p = normalizePath(filePath);
   if (!p) return null;
   if (HARNESS_RUNTIME_MARKERS.includes(p)) return 'runtime-marker';
+  if (p === EXEC_PROOF_PENDING_PREFIX || p.startsWith(`${EXEC_PROOF_PENDING_PREFIX}/`)) {
+    return 'runtime-marker';
+  }
   if (HARNESS_APPROVAL_MARKERS.includes(p)) return 'approval-marker';
   if (HARNESS_GATE_CONFIG_PATHS.includes(p)) return 'gate-config';
   // 说明权威（叙述 SSOT）：改动等价于调整门禁口径，须人工审阅
@@ -372,9 +482,12 @@ const INLINE_EVAL_RE =
 const INLINE_WRITE_TOKEN_RE =
   /(?:writefilesync|appendfilesync|createwritestream|fs\.write|fs\.rm|fs\.unlink|\.write\s*\(|open\s*\([^)]*['"][wa]|shutil\.|os\.remove|os\.unlink|rmtree|set-content|out-file|remove-item|file_put_contents)/i;
 
-/** 框架自带运行器：只写 test-results/ 受控产物，不纳入 R28 判定 */
+/**
+ * 框架自带运行器：只写 test-results/ 受控产物，不纳入 R28 判定。
+ * `startup-smoke-run` 曾遗漏（历史缺口，不影响判定但与 R34 kind 识别口径不一致），已补齐。
+ */
 const HARNESS_RUNNER_RE =
-  /\.cursor[\/\\]scripts[\/\\](?:e2e-run|lint-run|static-scan-run|qe-run|bootstrap-docs|gate-selftest|gate-scenarios)\.mjs\b/i;
+  /\.cursor[\/\\]scripts[\/\\](?:e2e-run|lint-run|static-scan-run|startup-smoke-run|qe-run|bootstrap-docs|gate-selftest|gate-scenarios)\.mjs\b/i;
 
 function stripQuotes(token) {
   return String(token ?? '').replace(/^['"]|['"]$/g, '');
@@ -437,7 +550,13 @@ export function classifyShellWriteIntent(command) {
       selfGoverned.push({ path: normalizePath(candidate), kind });
       continue;
     }
-    if (isGatedDevPath(candidate) || isHarnessStatePath(candidate)) targets.push(candidate);
+    if (
+      isGatedDevPath(candidate) ||
+      isHarnessStatePath(candidate) ||
+      isGatedArtifactsConfigPath(candidate)
+    ) {
+      targets.push(candidate);
+    }
   }
 
   return {

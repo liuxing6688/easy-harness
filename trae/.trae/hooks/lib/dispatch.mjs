@@ -17,7 +17,11 @@ import {
   extractSection,
   normalizeRoleSlug,
 } from './core.mjs';
-import { checkRequirementReady, checkHotfixDesign } from './iteration.mjs';
+import {
+  checkRequirementReady,
+  checkHotfixDesign,
+  checkSingleTaskPreconditions,
+} from './iteration.mjs';
 import {
   checkDesignReady,
   checkDesignReviewClean,
@@ -36,17 +40,18 @@ import {
   isLintExempt,
   isDupCheckExempt,
   isSecurityScanExempt,
-  isE2eExempt,
+  isStartupSmokeExempt,
+  checkStartupSmoke,
+  checkE2eGate,
   checkBatchApiTestReport,
   checkBatchStorageReconciliationReport,
 } from './qe.mjs';
 import { roleProgressStats, testEngineerStats } from './role-path.mjs';
-import { readE2eResult, readLintResult, readStaticScanResult } from './iteration.mjs';
 
 /**
- * R32：从 process.md 的「## 待派发角色列表」与「## 当前分派计划」解析出项目经理已计划的角色 slug 集合。
+ * R39：从 process.md 的「## 待派发角色列表」与「## 当前分派计划」解析出项目经理已计划的角色 slug 集合。
  *
- * 仅解析 PM 书面计划，**不**合并「最近派发」或「进度正在执行」——后者会使 R32 检查循环放行
+ * 仅解析 PM 书面计划，**不**合并「最近派发」或「进度正在执行」——后者会使 R39 检查循环放行
  * （recordDispatchedRole 在 checkRoleDispatchGate 之前已落盘）。
  *
  * @param {string} content process.md 全文
@@ -90,7 +95,7 @@ export function extractPlannedRoles(content) {
 }
 
 /**
- * R32：分派计划匹配——校验被派发角色是否在项目经理的「## 待派发角色列表」或
+ * R39：分派计划匹配——校验被派发角色是否在项目经理的「## 待派发角色列表」或
  * 「## 当前分派计划」中。机械化 AGENTS.md §5.1.2「须先经 PM 写入 process.md，
  * 再仅依 ## 当前分派计划 与 ## 待派发角色列表 发起 Task」与 R8「禁止越级发起 Task」。
  *
@@ -118,7 +123,7 @@ export function checkDispatchPlanMatch(role) {
   return {
     ok: false,
     reason: 'not-in-dispatch-plan',
-    message: `R8/R32：项目经理「## 待派发角色列表 / ## 当前分派计划」未包含 ${role}，顶层代理不得越级派发该角色。须先派 project-manager 更新分派计划后再发起该角色 Task。`,
+    message: `R8/R39：项目经理「## 待派发角色列表 / ## 当前分派计划」未包含 ${role}，顶层代理不得越级派发该角色。须先派 project-manager 更新分派计划后再发起该角色 Task。`,
   };
 }
 
@@ -161,7 +166,7 @@ export function checkRoleDispatchGate(role) {
     }
   }
 
-  // R32：分派计划匹配——受门禁角色须在 PM 的分派计划中（§5.1.2 / R8 越级派发机械化）。
+  // R39：分派计划匹配——受门禁角色须在 PM 的分派计划中（§5.1.2 / R8 越级派发机械化）。
   // project-manager / requirements-analyst 不在 GATED_ROLES，已由上方 lite-mode 分支与
   // switch default 放行；此处仅约束 SA/RR/DE/QE/TE。
   const planMatch = checkDispatchPlanMatch(role);
@@ -170,6 +175,12 @@ export function checkRoleDispatchGate(role) {
   switch (role) {
     case 'system-architect': {
       if (mode === 'hotfix' || mode === 'docs-only') return { ok: true, reason: `${mode}-exempt` };
+      // R37：single-task 须先证明「这是增量」——基线设计存在 + 增量范围四维已声明。
+      // 置于需求就绪校验之前：范围没界定清楚，需求澄清的边界本身就无从判断。
+      if (mode === 'single-task') {
+        const st = checkSingleTaskPreconditions(content);
+        if (!st.ok) return st;
+      }
       const r = checkRequirementReady();
       return r.ok
         ? { ok: true, reason: 'checked' }
@@ -177,7 +188,8 @@ export function checkRoleDispatchGate(role) {
             ok: false,
             reason: r.reason,
             message:
-              r.reason === 'no-implicit-requirement-record'
+              r.message ??
+              (r.reason === 'no-implicit-requirement-record'
                 ? '需求说明书「6. 隐性需求确认记录」缺少真实数据行（R19），需求分析师须先将苏格拉底式追问挖出的隐性要点（或合规的「排查结论」）落表，不得发起 system-architect。'
                 : r.reason === 'invalid-implicit-requirement-record-header'
                   ? 'R19：需求说明书「6. 隐性需求确认记录」表头须含类别、要点、用户确认摘要、关联需求/§7 追溯、状态、影响/决策点，不得发起 system-architect。'
@@ -189,7 +201,7 @@ export function checkRoleDispatchGate(role) {
                         ? 'R19：每条隐性需求确认记录须关联 requirement-list.md 的 R-编号并引用 §7 追溯，不得发起 system-architect。'
                         : r.reason === 'incomplete-pending-assumption-decision'
                           ? 'R19：待决假设须在影响/决策点中写明责任方与最晚决策点，不得发起 system-architect。'
-                          : '需求成果物未就绪（requirement-spec.md/requirement-list.md 缺失，或用户确认记录为空），不得发起 system-architect。',
+                          : '需求成果物未就绪（requirement-spec.md/requirement-list.md 缺失，或用户确认记录为空），不得发起 system-architect。'),
           };
     }
     case 'requirement-reviewer': {
@@ -203,13 +215,18 @@ export function checkRoleDispatchGate(role) {
         };
       }
       if (mode !== 'hotfix' && mode !== 'docs-only') {
-        const tech = checkTechSelectionConfirmed(content);
-        if (!tech.ok) {
-          return {
-            ok: false,
-            reason: tech.reason,
-            message: tech.message,
-          };
+        // R37：single-task 豁免 R26 技术选型确认——技术栈在基线项目里已经过 AskUserQuestion
+        // 确认并落痕，增量迭代不换栈，再要求一次确认只是重复劳动。**R25 同构模块识别
+        // 不豁免**：增量最容易「复制既有实现改两行」，正是 R25 要拦的场景。
+        if (mode !== 'single-task') {
+          const tech = checkTechSelectionConfirmed(content);
+          if (!tech.ok) {
+            return {
+              ok: false,
+              reason: tech.reason,
+              message: tech.message,
+            };
+          }
         }
         // R25：非 stub 设计文档须已排查同构模块并声明共享 primitive
         const iso = checkIsomorphicModuleSectionReady();
@@ -242,6 +259,25 @@ export function checkRoleDispatchGate(role) {
             ok: false,
             reason: p0.reason,
             message: p0.message,
+          };
+        }
+      } else if (mode === 'single-task') {
+        // R37：增量档——前置校验（基线设计 + 增量范围）+ 设计就绪 + 设计审核通过。
+        // 豁免的只有 R26 技术选型确认；R18 设计审核一条不减。
+        const st = checkSingleTaskPreconditions(content);
+        if (!st.ok) return st;
+        const d = checkDesignReady();
+        if (!d.ok) {
+          return { ok: false, reason: d.reason, message: '设计成果物未就绪，不得发起开发工程师。' };
+        }
+        const clean = checkDesignReviewClean();
+        if (!clean.ok) {
+          return {
+            ok: false,
+            reason: clean.reason,
+            message:
+              clean.message ??
+              '设计问题清单存在未解决问题或 R18 机读未通过，设计审核未通过，不得发起开发工程师。',
           };
         }
       } else {
@@ -322,13 +358,15 @@ export function checkRoleDispatchGate(role) {
       if (!qeClean.ok) {
         return { ok: false, reason: qeClean.reason, message: '质量报告存在未解决高/中严重等级问题或质量判定未通过，不得发起测试工程师。' };
       }
-      const lintClean = checkLintClean();
+      const lintClean = checkLintClean(content);
       if (!lintClean.ok) {
-        return { ok: false, reason: lintClean.reason, message: 'R15：编程规范（lint）门禁未通过（.lint-result.json 缺失或 gatePassed≠true），QE 阶段须运行 `node .trae/scripts/lint-run.mjs` 并整改至通过；确无可用 linter 时须走「架构师声明 lintApplicability:"n/a" + 用户确认」双要素豁免。不得发起测试工程师。' };
+        // R34/R38：执行证明未通过或工具不可用时，判据自带精确文案，不可被笼统的
+        // 「请整改 lint 违规」覆盖——那正是把环境问题误导成质量问题的旧行为。
+        return { ok: false, reason: lintClean.reason, message: lintClean.message ?? 'R15：编程规范（lint）门禁未通过（.lint-result.json 缺失或 gatePassed≠true），QE 阶段须运行 `node .trae/scripts/lint-run.mjs` 并整改至通过；确无可用 linter 时须走「架构师声明 lintApplicability:"n/a" + 用户确认」双要素豁免。不得发起测试工程师。' };
       }
-      const staticScanClean = checkStaticScanClean();
+      const staticScanClean = checkStaticScanClean(content);
       if (!staticScanClean.ok) {
-        return { ok: false, reason: staticScanClean.reason, message: 'R16：静态代码质量门禁未通过（.static-scan-result.json 缺失或重复代码/安全扫描任一 gatePassed≠true），QE 阶段须运行 `node .trae/scripts/static-scan-run.mjs` 并整改至通过；确无法运行时须分别走「架构师声明 dupCheckApplicability/securityScanApplicability:"n/a" + 用户确认」双要素豁免。不得发起测试工程师。' };
+        return { ok: false, reason: staticScanClean.reason, message: staticScanClean.message ?? 'R16：静态代码质量门禁未通过（.static-scan-result.json 缺失或重复代码/安全扫描任一 gatePassed≠true），QE 阶段须运行 `node .trae/scripts/static-scan-run.mjs` 并整改至通过；确无法运行时须分别走「架构师声明 dupCheckApplicability/securityScanApplicability:"n/a" + 用户确认」双要素豁免。不得发起测试工程师。' };
       }
       return { ok: true, reason: 'checked' };
     }
@@ -359,11 +397,21 @@ export function parseWorkflowState(content) {
       batchStorageReconPresent: false,
       lintExempt: false,
       lintPassed: false,
+      lintReason: 'no-process',
       staticScanExempt: false,
       staticScanPassed: false,
+      staticScanReason: 'no-process',
+      startupSmokeExempt: false,
+      startupSmokePassed: false,
+      startupSmokeReason: 'no-process',
+      batchE2eReason: 'no-process',
+      finalE2eReason: 'no-process',
+      toolUnavailableGates: [],
+      execProofFailedGates: [],
       batchTestComplete: false,
       finalTestComplete: false,
       finalTestRequired: false,
+      foldedTestChannel: false,
       phase: null,
       workflowMode: 'full',
     };
@@ -375,6 +423,13 @@ export function parseWorkflowState(content) {
   const workflowMode = getWorkflowMode(content);
   const isHotfix = workflowMode === 'hotfix';
   const isDocsOnly = workflowMode === 'docs-only';
+  // **R37**：`single-task` 与 `hotfix` 同属「折叠测试通道」——只跑一轮集成测试 + E2E，
+  // 不再区分批次 / 最终。两者的**区别**在折叠通道里保留哪些判据：
+  //   - hotfix（R11）：跳过 R14 接口测试与 R17 存储对账（热修不新增接口/存储面）；
+  //   - single-task（R37）：**保留** R14 与 R17（增量功能常常新增接口与写入路径），
+  //     只省掉「同一批改动测两遍」的冗余。
+  const isSingleTask = workflowMode === 'single-task';
+  const foldedTestChannel = isHotfix || isSingleTask;
 
   const dev = roleProgressStats(content, '开发工程师');
   const qe = roleProgressStats(content, '质量工程师');
@@ -388,10 +443,12 @@ export function parseWorkflowState(content) {
   const batchTestRowComplete = te.batch.total > 0 && te.batch.complete === te.batch.total && te.batch.inProgress === 0;
   const finalTestRowComplete = te.final.total > 0 && te.final.complete === te.final.total && te.final.inProgress === 0;
 
-  const batchResult = readE2eResult('batch');
-  const finalResult = readE2eResult('final');
-  const batchE2ePassed = batchResult?.gatePassed === true;
-  const finalE2ePassed = finalResult?.gatePassed === true;
+  // R34/R38：E2E 也走统一判据外壳（验签 → 工具不可用 → gatePassed），
+  // 不再直接读 `gatePassed`。
+  const batchE2e = checkE2eGate('batch');
+  const finalE2e = checkE2eGate('final');
+  const batchE2ePassed = batchE2e.ok;
+  const finalE2ePassed = finalE2e.ok;
 
   // R14：开发窗口批次集成测试阶段必须做接口测试，测试报告须含「## 接口测试报告」章节；
   // 无对外接口项目经架构师声明 + 用户确认后豁免（batchApiReportPresent 视为满足）。
@@ -408,36 +465,69 @@ export function parseWorkflowState(content) {
   // test-results/qe/.lint-result.json）。docs-only 无开发窗口视为满足；确无可用 linter 项目
   // 经「架构师声明 lintApplicability:"n/a" + 用户确认」双要素豁免后视为满足（防单方面弱化，R12）。
   const lintExempt = isLintExempt(content);
-  const lintResult = readLintResult();
-  const lintPassed = isDocsOnly ? true : (lintExempt || lintResult?.gatePassed === true);
+  const lint = checkLintClean(content);
+  const lintPassed = lint.ok;
 
   // R16：静态代码质量硬门禁（重复代码 DRY + 安全静态扫描）——QE 阶段须实际运行且
   // 两项子检查均 gatePassed=true（机读产物 test-results/qe/.static-scan-result.json）。
   // docs-only 无开发窗口视为满足；重复代码/安全扫描可分别经「架构师声明
   // dupCheckApplicability|securityScanApplicability:"n/a" + 用户确认」双要素豁免后视为满足
   // （防单方面弱化，R12）。staticScanExempt 仅当两项子检查均处于豁免状态时为 true。
-  const staticScanResult = readStaticScanResult();
   const dupCheckExempt = isDupCheckExempt(content);
   const securityScanExempt = isSecurityScanExempt(content);
   const staticScanExempt = dupCheckExempt && securityScanExempt;
-  const staticScanPassed = isDocsOnly
-    ? true
-    : (dupCheckExempt || staticScanResult?.duplication?.gatePassed === true) &&
-      (securityScanExempt || staticScanResult?.security?.gatePassed === true);
+  const staticScan = checkStaticScanClean(content);
+  const staticScanPassed = staticScan.ok;
 
-  // R11：hotfix 折叠批次/最终为单次通道——不要求独立的批次集成测试环节，
-  // 直接以「最终」判据为准（test-engineer 以 --scope=final 语义运行一次）；R14/R17
-  // 机读判据仅约束「开发窗口批次集成测试阶段」，故 hotfix 折叠通道不并入该判据。
-  const batchTestComplete = isHotfix
+  // R32：生产启动冒烟硬门禁——测试工程师须实际跑 startup-smoke-run.mjs（干净启动 +
+  // 强杀后再启动）并取得 gatePassed=true。与 R14/R17 不同，本判据**同时**并入批次与最终
+  // 两级（含 hotfix 折叠通道）：复盘中两次热修恰恰都是启动缺陷，折叠通道更不能少这道。
+  const startupSmokeExempt = isStartupSmokeExempt(content);
+  const startupSmoke = checkStartupSmoke(content);
+  const startupSmokePassed = isDocsOnly ? true : startupSmoke.ok;
+  const startupSmokeReason = startupSmoke.reason;
+
+  // R11 / R37：折叠通道不要求独立的批次集成测试环节，直接以「最终」判据为准
+  // （test-engineer 以 --scope=final 语义运行一次）。
+  const batchTestComplete = foldedTestChannel
     ? true
-    : batchTestRowComplete && batchE2ePassed && batchApiReportPresent && batchStorageReconPresent;
-  const finalTestComplete = isDocsOnly ? true : finalTestRowComplete && finalE2ePassed;
+    : batchTestRowComplete &&
+      batchE2ePassed &&
+      batchApiReportPresent &&
+      batchStorageReconPresent &&
+      startupSmokePassed;
+
+  // R37 关键差异：single-task 的折叠通道把 R14/R17 **并入最终判据**。
+  // hotfix 之所以能跳过，是因为热修不新增接口/存储面；增量功能没有这个前提，
+  // 若照抄 R11 就等于「小改动可以不做接口测试和存储对账」——那是放松（R12）。
+  const finalTestComplete = isDocsOnly
+    ? true
+    : finalTestRowComplete &&
+      finalE2ePassed &&
+      startupSmokePassed &&
+      (isSingleTask ? batchApiReportPresent && batchStorageReconPresent : true);
 
   const finalTestRequired = isDocsOnly
     ? false
-    : isHotfix
+    : foldedTestChannel
       ? devComplete && qeComplete
       : devComplete && qeComplete && batchTestComplete;
+
+  // R38：本轮哪些门禁是因「工具不可用」而失败（供 stop 门禁选择正确的处置文案）。
+  // R34：哪些门禁是因「执行证明未通过」而失败（伪造/未签发/被改动）。
+  const gateVerdicts = [
+    ['R15 lint', lint],
+    ['R16 静态扫描', staticScan],
+    ['R32 启动冒烟', startupSmoke],
+    ['批次 E2E', batchE2e],
+    ['最终 E2E', finalE2e],
+  ];
+  const toolUnavailableGates = gateVerdicts
+    .filter(([, v]) => v?.toolUnavailable === true)
+    .map(([label]) => label);
+  const execProofFailedGates = gateVerdicts
+    .filter(([, v]) => typeof v?.reason === 'string' && v.reason.startsWith('exec-proof-'))
+    .map(([label]) => label);
 
   return {
     blocking,
@@ -457,14 +547,22 @@ export function parseWorkflowState(content) {
     batchStorageReconPresent,
     lintExempt,
     lintPassed,
+    lintReason: lint.reason,
     staticScanExempt,
     staticScanPassed,
+    staticScanReason: staticScan.reason,
+    startupSmokeExempt,
+    startupSmokePassed,
+    startupSmokeReason,
+    batchE2eReason: batchE2e.reason,
+    finalE2eReason: finalE2e.reason,
+    toolUnavailableGates,
+    execProofFailedGates,
     batchTestComplete,
     finalTestComplete,
     finalTestRequired,
+    foldedTestChannel,
     phase: fm.phase ?? null,
     workflowMode,
   };
 }
-
-

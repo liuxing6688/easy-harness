@@ -24,7 +24,7 @@ export function finding1Scenario() {
     .replace(/\r\n/g, '\n');
   const withConfirm = template.replace(
     '| ------ | ---- | ------------ |\n',
-    '| ------ | ---- | ------------ |\n| 需求摘要 | 2026-01-01 | 已确认 |\n',
+    '| ------ | ---- | ------------ |\n| 需求摘要 | 2026-01-01 | 已确认 |\n| 界面与交互期望 | 2026-01-01 | 确认接受组件库默认外观，本版无独立界面期望 |\n',
   );
   if (withConfirm === template) {
     recordFail('B1 模板注入用户确认行', 'injected', 'template-shape-changed');

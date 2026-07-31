@@ -43,6 +43,20 @@
 | ------------------ | ------------------ | ----------------- |
 | 是/否 | 数据库/文件/缓存/对象存储/其他 | |
 
+### 生产启动与异常恢复（R32 输入，须明确）
+
+> **机制说明（R32，2026-07-29 启动报错复盘新增）**：测试工程师须对**本节声明的生产启动命令**跑两段冒烟（`node .trae/scripts/startup-smoke-run.mjs`）：①干净启动；②**强杀后再启动**。因此本节须给出可被机械执行的启动命令，并说明单实例/锁等互斥机制在异常退出后的恢复策略——复盘中 `npm run start` 因 ESM 导入失败、以及修好后再启动出现 `DATA_DIRECTORY_LOCKED`，均源于本节缺位。
+>
+> 启动命令须与 `gated-artifacts.json` 的 `productionStartupCommand` 一致（`package.json` 的 `scripts.start` 即为默认探测值，一致时可不重复声明）。确无常驻进程可冒烟（纯库、纯静态资源包）时，走 `startupSmokeApplicability: "n/a"` 双要素豁免。
+
+| 项 | 内容 |
+| -- | ---- |
+| 生产启动命令 | （如 `npm run start`；须为构建产物/生产路径，**不得**填 dev server） |
+| 前置构建命令 | （如 `npm run build`；无则填「无」） |
+| 健康检查地址 | （如 `http://127.0.0.1:3000/`；无 HTTP 端点则填「无」，冒烟退化为进程存活判据） |
+| 单实例 / 锁机制 | （如数据目录锁、PID 文件、端口独占；无则填「无」） |
+| 异常退出后的恢复策略 | （强杀/掉电后残留锁与临时文件如何识别与清理；须能通过「强杀后再启动」冒烟） |
+
 ## 5. 代码规范
 
 - 注释语言：（中文/英文，与项目约定一致）
@@ -99,9 +113,11 @@
 | 接口测试 | test-engineer | | 开发窗口批次集成测试阶段必测（R14，见 .trae/harness/spec/mechanical-gates.md §8.3）；覆盖各接口/契约 |
 | 存储对账 | test-engineer | | 开发窗口批次机读硬门禁（R17，见 .trae/harness/spec/mechanical-gates.md §8.3 / `checkBatchStorageReconciliationReport`）；介质范围见 §4 |
 | E2E（若适用） | test-engineer | Playwright Chromium headless | P0 场景，见 .trae/harness/spec/mechanical-gates.md §8.3；写路径对账留痕见 R17 |
+| 生产启动冒烟 | test-engineer | `node .trae/scripts/startup-smoke-run.mjs` | 批次与最终两级机读硬门禁（R32，见 .trae/harness/spec/mechanical-gates.md §8.6）；启动命令与恢复策略见 §4「生产启动与异常恢复」 |
 
 > 若项目无 UI 或不适用浏览器 E2E，须在 §7 `gated-artifacts.json` 中声明 `e2eApplicability: "n/a"` 并注明理由，等待用户在 `process.md`「用户确认记录」中确认豁免。
 > 若项目无业务数据持久化，须声明 `storageReconciliationApplicability: "n/a"` 并经用户确认后豁免 R17（见 .trae/harness/spec/mechanical-gates.md §8.2）。
+> 若项目确无可冒烟的常驻启动路径（纯库、纯静态资源包），须声明 `startupSmokeApplicability: "n/a"` 并经用户确认后豁免 R32；**「暂时起不来」不是豁免理由**——冒烟失败属产品缺陷，须回派开发工程师。
 
 ## 7. 受门禁保护的产物声明
 

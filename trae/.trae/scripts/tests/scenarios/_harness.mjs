@@ -19,6 +19,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseChromiumResults, computeGateResult } from '../../e2e-run-lib.mjs';
+import {
+  signFixtureArtifact,
+  snapshotExecProofState,
+  restoreExecProofState,
+} from '../exec-proof-fixture.mjs';
+
+export { snapshotExecProofState, restoreExecProofState };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export const PROJECT_ROOT = path.resolve(__dirname, '../../../..');
@@ -30,6 +37,7 @@ export const VERBOSE = process.argv.includes('--verbose');
 
 export const HOOK_FILES = {
   role: path.join(HOOKS_DIR, 'gate-role-sequence.mjs'),
+  r13: path.join(HOOKS_DIR, 'gate-r13-subagent.mjs'),
   write: path.join(HOOKS_DIR, 'gate-dev-workflow.mjs'),
   shell: path.join(HOOKS_DIR, 'gate-dev-shell.mjs'),
   toolchain: path.join(HOOKS_DIR, 'gate-toolchain-install.mjs'),
@@ -50,6 +58,8 @@ export const CONFIRM_SECTION = [
   '| ------ | ---- | ------------ |',
   '| 需求摘要 | 2026-01-01 | 已确认 |',
   '| 技术选型 | 2026-01-01 | 确认采用 Node.js；来源 tech-stack-options.md 方案 A |',
+  // R33：界面与交互期望确认行（发起 system-architect 的机读前置）
+  '| 界面与交互期望 | 2026-01-01 | 确认接受组件库默认外观，本版无独立界面期望 |',
 ].join('\n');
 
 /** R20：轻量模式机读确认行 */
@@ -85,7 +95,7 @@ export const DISPATCH_SECTION = [
 ].join('\n');
 
 /**
- * 生成含指定角色的分派计划段（R32 场景测试用：被派发角色须在 PM 分派计划中）。
+ * 生成含指定角色的分派计划段（R39 场景测试用：被派发角色须在 PM 分派计划中）。
  * @param {string[]} roles 角色 slug 数组（如 ['system-architect']）
  * @returns {string}
  */
@@ -287,6 +297,7 @@ export const API_EXEMPT_CONFIRM = [
   '| ------ | ---- | ------------ |',
   '| 需求摘要 | 2026-01-01 | 已确认 |',
   '| 技术选型 | 2026-01-01 | 确认采用 Node.js |',
+  '| 界面与交互期望 | 2026-01-01 | 确认接受组件库默认外观，本版无独立界面期望 |',
   '| 接口测试豁免 | 2026-01-01 | 纯算法库无对外接口，确认豁免接口测试 |',
 ].join('\n');
 export const API_NA_GATED = '{\n  "apiTestApplicability": "n/a",\n  "apiTestApplicabilityReason": "纯算法库无对外接口"\n}\n';
@@ -527,10 +538,20 @@ export function writeFixture(name, files) {
   return root;
 }
 
-export function buildPayload(hook, { role, filePath, command, conversationId, agentId }) {
+export function buildPayload(hook, { role, filePath, command, conversationId, agentId, content }) {
   let payload;
   if (hook === 'role') payload = { tool_name: 'Task', tool_input: { subagent_type: role } };
-  else if (hook === 'write') payload = { tool_name: 'Write', tool_input: { path: filePath } };
+  else if (hook === 'r13') {
+    // gate-r13-subagent（matcher:"*"）：读 agent_id 判定角色，任意 tool_name 即可触发
+    payload = { tool_name: 'Read', tool_input: {} };
+  }
+  else if (hook === 'write') {
+    // `content` 供 R36 修复通道作用域用例构造「写入内容里夹带 ApplyPatch 路径」的形态
+    payload = {
+      tool_name: 'Write',
+      tool_input: { path: filePath, ...(content === undefined ? {} : { content }) },
+    };
+  }
   else if (hook === 'shell' || hook === 'toolchain') payload = { command, tool_input: { command } };
   else payload = {};
   // R5 身份判定（2026-07-29 修复）：agent_id 是 Trae PreToolUse stdin 的标准字段，
@@ -541,7 +562,9 @@ export function buildPayload(hook, { role, filePath, command, conversationId, ag
   return payload;
 }
 
-export function runHook({ hook, role, filePath, command, processPath, gatedPath, conversationId, agentId }) {
+export function runHook({
+  hook, role, filePath, command, processPath, gatedPath, conversationId, agentId, content,
+}) {
   const env = { ...process.env };
   delete env.HARNESS_PROCESS_PATH;
   delete env.HARNESS_GATED_ARTIFACTS_PATH;
@@ -550,7 +573,7 @@ export function runHook({ hook, role, filePath, command, processPath, gatedPath,
 
   const res = spawnSync('node', [HOOK_FILES[hook]], {
     cwd: PROJECT_ROOT,
-    input: JSON.stringify(buildPayload(hook, { role, filePath, command, conversationId, agentId })),
+    input: JSON.stringify(buildPayload(hook, { role, filePath, command, conversationId, agentId, content })),
     encoding: 'utf8',
     env,
   });
@@ -578,7 +601,7 @@ export function check(label, expect, opts) {
     console.log(`  PASS  expect=${expect} got=${outcome} :: ${label}`);
   } else {
     failCount += 1;
-    failures.push({ label, expect, outcome });
+    failures.push({ label, expect, outcome, reason: verdict?.hookSpecificOutput?.permissionDecisionReason || verdict?.reason || '' });
     console.error(`  FAIL  expect=${expect} got=${outcome} :: ${label}`);
   }
   if (VERBOSE) {
@@ -624,32 +647,73 @@ export function restoreLint() {
   else fs.writeFileSync(LINT_FILE, lintSnapshot, 'utf8');
 }
 
-export function writeLintPass() {
+/**
+ * 合成 lint 产物。**R34**：默认走真实签发+落签，使场景测的是门禁判据本身
+ * 而不是「验签缺失」这一个原因（`sign: false` 用于专门构造未签名场景）。
+ */
+function writeLintResultFixture(result, { sign = true } = {}) {
   fs.mkdirSync(path.dirname(LINT_FILE), { recursive: true });
-  const result = {
+  const payload = { ...result, _note: 'Synthesized by gate-scenarios.mjs for regression only.' };
+  if (sign) signFixtureArtifact('lint', payload);
+  fs.writeFileSync(LINT_FILE, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+export function writeLintPass(options) {
+  writeLintResultFixture(
+    {
+      gatePassed: true,
+      reason: 'passed',
+      stack: 'node',
+      command: 'npm run lint',
+      exitCode: 0,
+      executedAt: new Date().toISOString(),
+    },
+    options,
+  );
+}
+
+export function writeLintFail(options) {
+  writeLintResultFixture(
+    {
+      gatePassed: false,
+      reason: 'lint-failed',
+      stack: 'node',
+      command: 'npm run lint',
+      exitCode: 1,
+      executedAt: new Date().toISOString(),
+    },
+    options,
+  );
+}
+
+/**
+ * **R34 新鲜度**：一份签名完全有效、但产出于最后一次源码变更之前的绿产物。
+ * 复现「代码还绿时真跑一次、存下来、改坏代码后原样放回」这条不必抢私钥的重放路径。
+ */
+export function writeLintStale() {
+  writeLintResultFixture({
     gatePassed: true,
     reason: 'passed',
     stack: 'node',
     command: 'npm run lint',
     exitCode: 0,
-    executedAt: new Date().toISOString(),
-    _note: 'Synthesized by gate-scenarios.mjs for regression only.',
-  };
-  fs.writeFileSync(LINT_FILE, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+    executedAt: '2020-01-01T00:00:00.000Z',
+  });
 }
 
-export function writeLintFail() {
-  fs.mkdirSync(path.dirname(LINT_FILE), { recursive: true });
-  const result = {
+/** R38：lint 工具不可用（离线拉不到 linter）——与「真有 lint 问题」须走不同处置路径 */
+export function writeLintToolUnavailable() {
+  writeLintResultFixture({
     gatePassed: false,
-    reason: 'lint-failed',
+    reason: 'lint-tool-unavailable',
+    toolUnavailable: true,
+    toolUnavailableCategory: 'dependency-fetch',
+    toolUnavailableDetail: 'npm ERR! code E404',
     stack: 'node',
     command: 'npm run lint',
     exitCode: 1,
     executedAt: new Date().toISOString(),
-    _note: 'Synthesized by gate-scenarios.mjs for regression only.',
-  };
-  fs.writeFileSync(LINT_FILE, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+  });
 }
 
 export function clearLint() {
@@ -759,8 +823,44 @@ export function clearDispatchedRoles() {
   fs.rmSync(DISPATCHED_ROLES_FILE, { force: true });
 }
 
-export function writeStaticScanResult(result) {
+// R40：闭环锁 marker（.trae/hooks/.workflow-closure-pending.json）——与派发角色、
+// 根会话同为宿主真实路径下的运行时状态，快照/还原避免污染。
+const CLOSURE_LOCK_FILE = path.join(HOOKS_DIR, '.workflow-closure-pending.json');
+let closureLockSnapshot = null;
+
+export function snapshotClosureLock() {
+  closureLockSnapshot = fs.existsSync(CLOSURE_LOCK_FILE)
+    ? fs.readFileSync(CLOSURE_LOCK_FILE, 'utf8')
+    : null;
+}
+
+export function restoreClosureLock() {
+  if (closureLockSnapshot === null) fs.rmSync(CLOSURE_LOCK_FILE, { force: true });
+  else fs.writeFileSync(CLOSURE_LOCK_FILE, closureLockSnapshot, 'utf8');
+}
+
+export function clearClosureLock() {
+  fs.rmSync(CLOSURE_LOCK_FILE, { force: true });
+}
+
+export function readClosureLockFile() {
+  return fs.existsSync(CLOSURE_LOCK_FILE)
+    ? fs.readFileSync(CLOSURE_LOCK_FILE, 'utf8')
+    : null;
+}
+
+/** 直接写一份 marker（构造跨回合约束的起始态，绕过 stop hook） */
+export function writeClosureLockFile(stage, missingGates = [], reason = '') {
+  fs.writeFileSync(
+    CLOSURE_LOCK_FILE,
+    JSON.stringify({ stage, missingGates, reason, pendingSince: new Date().toISOString() }, null, 2),
+    'utf8',
+  );
+}
+
+export function writeStaticScanResult(result, { sign = true } = {}) {
   fs.mkdirSync(path.dirname(STATIC_SCAN_FILE), { recursive: true });
+  if (sign) signFixtureArtifact('static-scan', result);
   fs.writeFileSync(STATIC_SCAN_FILE, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
 }
 
@@ -798,11 +898,76 @@ export function clearStaticScan() {
   fs.rmSync(STATIC_SCAN_FILE, { force: true });
 }
 
+// R32：生产启动冒烟机读产物（test-results/e2e/.startup-smoke-result.json）——
+// 与 E2E/lint 产物同为受控运行产物，快照/还原避免污染宿主运行时。
+const STARTUP_SMOKE_FILE = path.join(E2E_DIR, '.startup-smoke-result.json');
+let startupSmokeSnapshot = null;
+
+export function snapshotStartupSmoke() {
+  startupSmokeSnapshot = fs.existsSync(STARTUP_SMOKE_FILE)
+    ? fs.readFileSync(STARTUP_SMOKE_FILE, 'utf8')
+    : null;
+}
+
+export function restoreStartupSmoke() {
+  if (startupSmokeSnapshot === null) fs.rmSync(STARTUP_SMOKE_FILE, { force: true });
+  else fs.writeFileSync(STARTUP_SMOKE_FILE, startupSmokeSnapshot, 'utf8');
+}
+
+function writeStartupSmokeResult(result, { sign = true } = {}) {
+  fs.mkdirSync(E2E_DIR, { recursive: true });
+  const payload = { ...result, _note: 'Synthesized by gate-scenarios.mjs for regression only.' };
+  if (sign) signFixtureArtifact('startup-smoke', payload);
+  fs.writeFileSync(STARTUP_SMOKE_FILE, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+}
+
+export function writeStartupSmokePass() {
+  writeStartupSmokeResult({
+    gatePassed: true,
+    reason: 'passed',
+    command: 'npm run start',
+    commandSource: 'package.json.scripts.start',
+    cleanStart: { passed: true, exited: false, exitCode: null, healthOk: null, elapsedMs: 8000 },
+    restartAfterKill: { passed: true, exited: false, exitCode: null, healthOk: null, elapsedMs: 8000 },
+    capturedAt: new Date().toISOString(),
+  });
+}
+
+/** 干净启动就失败（复盘 1a：dist 起不来） */
+export function writeStartupSmokeFail() {
+  writeStartupSmokeResult({
+    gatePassed: false,
+    reason: 'clean-start-failed',
+    command: 'npm run start',
+    commandSource: 'package.json.scripts.start',
+    cleanStart: { passed: false, exited: true, exitCode: 1, healthOk: null, elapsedMs: 320 },
+    restartAfterKill: { passed: false, skipped: true, reason: 'clean-start-failed' },
+    capturedAt: new Date().toISOString(),
+  });
+}
+
+/** 干净启动过、强杀后再启动失败（复盘 1c：DATA_DIRECTORY_LOCKED 类陈旧锁） */
+export function writeStartupSmokeRestartFail() {
+  writeStartupSmokeResult({
+    gatePassed: false,
+    reason: 'restart-after-kill-failed',
+    command: 'npm run start',
+    commandSource: 'gated-artifacts.productionStartupCommand',
+    cleanStart: { passed: true, exited: false, exitCode: null, healthOk: true, elapsedMs: 8000 },
+    restartAfterKill: { passed: false, exited: true, exitCode: 1, healthOk: false, elapsedMs: 410 },
+    capturedAt: new Date().toISOString(),
+  });
+}
+
+export function clearStartupSmoke() {
+  fs.rmSync(STARTUP_SMOKE_FILE, { force: true });
+}
+
 export function specFor(id, status) {
   return { title: `[${id}] e2e`, tests: [{ projectName: 'chromium', results: [{ status }] }] };
 }
 
-export function writeE2e(scope, { requiredIds, passed = [], failed = [], skipped = [] }) {
+export function writeE2e(scope, { requiredIds, passed = [], failed = [], skipped = [], sign = true }) {
   const report = {
     suites: [
       {
@@ -826,6 +991,7 @@ export function writeE2e(scope, { requiredIds, passed = [], failed = [], skipped
     _note: 'Synthesized by gate-scenarios.mjs via real e2e-run-lib for regression only.',
   };
   fs.mkdirSync(E2E_DIR, { recursive: true });
+  if (sign) signFixtureArtifact(scope === 'final' ? 'e2e-final' : 'e2e-batch', result);
   fs.writeFileSync(E2E_FILES[scope], `${JSON.stringify(result, null, 2)}\n`, 'utf8');
 }
 

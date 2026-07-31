@@ -52,8 +52,8 @@ Trae 原生 PreToolUse / PostToolUse 的 `tool_name` 采用标准化命名（见
 
 | Matcher | 对应工具名 | 对应 Hook 脚本 | 用途 |
 | ------- | ---------- | ------------- | ---- |
-| `Write\|Edit` | Write / Edit | `gate-dev-workflow.mjs` | R5 顶层写入门禁 + 角色路径校验 |
-| `RunCommand` | 终端命令 | `gate-dev-shell.mjs` + `gate-toolchain-install.mjs` | Shell 命令门禁 + 工具链安装批准 |
+| `Write\|Edit\|MultiEdit\|Delete\|DeleteFile` | Write / Edit / MultiEdit / Delete / DeleteFile | `gate-dev-workflow.mjs` | R5 顶层写入门禁 + 角色路径校验 |
+| `Bash\|RunCommand` | Bash / RunCommand | `gate-dev-shell.mjs` + `gate-toolchain-install.mjs` | Shell 命令门禁 + 工具链安装批准（防御性双匹配，覆盖 Trae 标准名 `RunCommand` 与 Cursor 兼容名 `Bash`） |
 | `Task` | 子任务分派 | `gate-role-sequence.mjs` | R13 角色派发前置校验 + R5 角色记录（**Trae 实测不路由**：此 matcher 不触发；R13/角色记录由 `gate-r13-subagent`（`matcher:"*"`）自动承担，见 §0.6 与 `mechanical-gates.md` §8.4） |
 | `*`（全部工具） | 子代理任意工具调用 | `gate-r13-subagent.mjs` | **R13 自动门禁（Trae 适配）**：子代理首次工具调用时基于 `agent_id` 自动执行 R13 校验 + `recordDispatchedRole`；短路 `solo_agent`/非门禁角色 |
 | Stop 事件 | - | `gate-stop-workflow.mjs` | R9 / R14–R17 收尾门禁 |

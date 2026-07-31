@@ -14,8 +14,10 @@
  *   → R5 角色↔路径 →（仅源码路径，排除 e2e）分派计划 + R3/R9/阻塞 → allow
  *
  * 共享判据：`./workflow-gate-lib.mjs`（实现按域拆在 `./lib/`）。
- * 自锁防护（§8.4）：lib 加载失败或未预期运行时异常时 fail-open 放行并 stderr 告警，
- * 避免门禁自身故障导致全流程硬死锁；同时 best-effort 落盘 fail-open 事件。
+ * 自锁防护（§8.4 / **R36**）：**lib 加载失败** fail-open 放行（门禁整体损坏时不锁死项目）；
+ * **判定期异常**默认 fail-closed → `deny`，仅当本次调用**整体**就是对活跃 `process.md`
+ * 的直接写入时才走修复通道例外（`resolveGateRepairPaths`）。
+ * 两种情况都写 stderr 并 best-effort 落盘门禁异常事件。
  */
 /**
  * 门禁自锁逃生：写 stderr、可选落盘、stdout 输出 allow 后退出。
@@ -38,6 +40,44 @@ function failOpenAllow(context, err, lib) {
 }
 
 /**
+ * **R36**：判定期异常 fail-closed。
+ *
+ * §8.4 长期披露：入口脚本自行 `try/catch` 并以退出码 0 输出合法 allow JSON，属
+ * 「Hook 成功」，故 `hooks.json` 的 `failClosed: true` 永不触发——**任何能让判定逻辑
+ * 抛异常的 `process.md` 都能打开门禁**，而 `process.md` 恰由被约束方书写。本函数实施
+ * §8.4 自己给出的修法：区分「lib 加载失败」（继续 fail-open，防门禁损坏即全局死锁）
+ * 与「判定期异常」（deny）。
+ *
+ * **防死锁例外**：`repairPaths` 非空时放行。判定期异常最常见的成因就是 `process.md`
+ * 结构损坏，而修复它必须能写它；若一并拒绝，用户会拿到一个代理无法自愈、只能手工
+ * 编辑的死局——正是本框架反复警惕的「把项目锁死」失效模式。
+ * 该口子有多窄由 `resolveGateRepairPaths`（paths.mjs）定义：只认活跃 `process.md`、
+ * 只认直接路径字段、且本次调用不得夹带任何其他路径。
+ */
+function failClosedDeny(context, err, lib, repairPaths = []) {
+  process.stderr.write(`[gate-dev-workflow] fail-closed (${context}): ${err?.message ?? err}\n`);
+  try {
+    lib?.recordFailOpenEvent?.('gate-dev-workflow', context, err);
+  } catch {
+    /* 落盘失败不影响本次判定 */
+  }
+  const { verdict, output } = lib.buildGateExceptionVerdict({
+    hook: 'gate-dev-workflow',
+    context,
+    err,
+    channel: 'write',
+    repairPaths,
+  });
+  if (verdict === 'allow') {
+    process.stderr.write(
+      `[gate-dev-workflow] fail-closed 例外放行（流程文件修复通道）：${repairPaths.join(', ')}\n`,
+    );
+  }
+  process.stdout.write(JSON.stringify(output));
+  process.exit(0);
+}
+
+/**
  * 从 ApplyPatch 文本中提取 `*** Add|Update|Delete File:` 目标路径。
  * @param {unknown} text
  * @returns {string[]}
@@ -54,28 +94,35 @@ function extractPatchPaths(text) {
 }
 
 /**
- * 从 tool_input / arguments 中收集本次写入涉及的全部路径。
- * 同时覆盖直接字段（path / file_path 等）与嵌套 patch/diff 文本。
+ * 直接路径字段（工具参数明写的写入目标）。
+ *
+ * 与内容里解析出来的路径分开返回：前者是平台交给 Hook 的事实，后者是代理可以随手
+ * 编造的文本。收紧判据（是否受门禁）两者都要看，**放松判据**（R36 修复例外）只认前者。
  * @param {unknown} value
  * @returns {string[]}
  */
-function extractToolPaths(value) {
-  const paths = [];
-  if (!value) return paths;
-
-  if (typeof value === 'string') {
-    return extractPatchPaths(value);
-  }
-
+function extractDirectToolPaths(value) {
+  if (!value || typeof value === 'string') return [];
   const directFields = ['path', 'file_path', 'target_file', 'target_notebook', 'notebook_path'];
+  const paths = [];
   for (const field of directFields) {
     if (typeof value[field] === 'string') paths.push(value[field]);
   }
+  return paths;
+}
 
+/**
+ * 从嵌套的 patch/diff/content 文本中解析出的写入目标。
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+function extractContentToolPaths(value) {
+  if (!value) return [];
+  if (typeof value === 'string') return extractPatchPaths(value);
+  const paths = [];
   for (const field of ['patch', 'diff', 'content', 'input']) {
     paths.push(...extractPatchPaths(value[field]));
   }
-
   return paths;
 }
 
@@ -102,12 +149,28 @@ async function main() {
     isTopLevelAgent,
     normalizePath,
     readStdinJsonAsync,
+    readClosureLock,
+    closureLockBlocksDev,
   } = lib;
+
+  // R36：判定期异常的兜底例外——记录本次涉及的流程文件路径，供 failClosedDeny 判断
+  // 是否放行「修复通道」。须在 try 之外声明，异常时才拿得到。
+  let repairPaths = [];
 
   try {
     const input = await readStdinJsonAsync();
     const toolInput = input.tool_input ?? input.arguments ?? {};
-    const filePaths = extractToolPaths(toolInput);
+    const directPaths = extractDirectToolPaths(toolInput);
+    const filePaths = [...directPaths, ...extractContentToolPaths(toolInput)];
+    try {
+      repairPaths = lib.resolveGateRepairPaths({
+        toolName: input.tool_name ?? input.toolName,
+        directPaths,
+        allPaths: filePaths,
+      });
+    } catch {
+      /* 路径判定本身失败时不给例外，走正常 fail-closed */
+    }
 
     // R10：已取消（不可逆）的 process.md 一律冻结，优先于其余判定（含 docs 允许扩展名放行）。
     for (const filePath of filePaths) {
@@ -170,11 +233,28 @@ async function main() {
 
     // 源码 / 构建产物等仍走分派计划 + R3/R9 门禁；e2e（期望 TE）与纯文档成果物不要求 DE 分派计划。
     if (filePaths.some((filePath) => isGatedDevPath(filePath) && !isE2eTestPath(filePath))) {
+      // R40 闭环锁：marker 存在时收紧 DE 源码写入——未闭环不得开始新开发。与 R21 区别：
+      // R21 读 .dispatched-roles.json（最近派发，可被 PM→DE 链绕过）；闭环锁读持久化
+      // marker + 回派依据（## 回退计数 > 0），跨回合有效。dev-incomplete 不拦（DE 任务未完成）。
+      const lock = readClosureLock();
+      if (lock) {
+        const devBlock = closureLockBlocksDev(null, lock);
+        if (devBlock.blocked) {
+          deny(
+            devBlock.reason,
+            'AGENTS.md R40（闭环锁）：Trae 对 stop 门禁 loop_limit 的强制力未保证，故未闭环状态由 marker 持久化、在 PreToolUse 前置阻断。须先补完流程（跑运行器/写 test-results/推进 process.md）或由 PM 回派 DE（## 回退计数表留痕作回派依据）。',
+          );
+        }
+      }
       assertDevGateOrDeny();
     }
 
     allow();
   } catch (err) {
+    // R36：判定期异常默认 fail-closed；lib 加载失败仍走上方 failOpenAllow。
+    if (lib.getGateExceptionPolicy?.().failClosed) {
+      failClosedDeny('runtime', err, lib, repairPaths);
+    }
     failOpenAllow('runtime', err, lib);
   }
 }

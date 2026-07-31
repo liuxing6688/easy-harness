@@ -94,6 +94,36 @@ export function hardeningScenarios() {
     hook: 'write', filePath: '.cursor/harness-state.json', processPath: noDispProc, gatedPath: noDispGated,
   });
 
+  // R29 加强（2026-07-29 审核）：gated-artifacts.json 是 harness.config.json 的 merge
+  // 另一半（extra* 收紧项 / 各 {gate}Applicability 豁免第一要素 / R32 启动命令）。
+  // 历史实现把它整体排除在门禁外，任何角色任何阶段都能改写门禁强度。现收敛为仅 SA 可写。
+  const saActive = writeFixture('hard-sa-active', {
+    'docs/process/process.md': greenfieldReady([
+      '| 系统架构师 | T0-DESIGN | 正在执行 | 设计中 |',
+    ]),
+    'docs/requirement/requirement-spec.md': REQ_SPEC,
+    'docs/requirement/requirement-list.md': REQ_LIST,
+    'docs/design/detail-design-spec.md': DESIGN_SPEC,
+    'docs/design/develop-task-list.md': TASK_LIST,
+    'docs/design/design-problem-list.md': DPL_CLEAN,
+    'docs/design/gated-artifacts.json': GATED_EMPTY,
+  });
+  const saProc = relToProject(path.join(saActive, 'docs/process/process.md'));
+  const saGated = relToProject(path.join(saActive, 'docs/design/gated-artifacts.json'));
+
+  check('GA1 R29 加强：DE 活跃时写 gated-artifacts.json 被拒（不得自行放宽门禁）', 'deny', {
+    hook: 'write', filePath: readyGated, processPath: readyProc, gatedPath: readyGated,
+  });
+  check('GA2 R29 加强：SA 活跃时写 gated-artifacts.json 放行（架构师本职）', 'allow', {
+    hook: 'write', filePath: saGated, processPath: saProc, gatedPath: saGated,
+  });
+  check('GA3 R29 加强：改用 Shell 写 gated-artifacts.json 同样被拒（R28 同源）', 'deny', {
+    hook: 'shell',
+    command: `Set-Content ${readyGated} -Value '{"extraExtensionGateExemptDirs":["src"]}'`,
+    processPath: readyProc,
+    gatedPath: readyGated,
+  });
+
   // -------------------------------------------------------------------------
   // R6 加强：非 sourceDirs 命名的主流布局
   // -------------------------------------------------------------------------

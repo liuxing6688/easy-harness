@@ -32,9 +32,12 @@
  * 本 Hook 将自动生效。详见 `mechanical-gates.md` §8.4「门禁能力边界」。
  *
  * fail-open（§8.4；`hooks.json` 亦设 `failClosed: false`）：
- *   - lib 加载失败 / 未预期运行时异常；
+ *   - lib 加载失败；
  *   - 无法从 tool_input 解析出目标角色名；
  *   - 目标角色不在 GATED_ROLES（如 project-manager、requirements-analyst）。
+ *
+ * **R36**：**判定期异常**不再 fail-open，默认 deny（否则「让判定逻辑抛异常」即可跳过整条
+ * R13 门禁链）。可由用户在 `harness.config.json` 设 `gateException.onJudgmentError: "allow"` 回退。
  *
  * 共享判据：`./workflow-gate-lib.mjs`。
  */
@@ -134,12 +137,15 @@ async function main() {
       }
     }
 
-    if (!role || !GATED_ROLES.has(role)) {
+    // 须用归一化后的 slug 判定：Task 若以中文角色名（「开发工程师」）或别名发起，
+    // 用原始字符串查表会命中 fail-open 分支，把整条 R13 门禁链静默跳过。
+    // 上方 R10 判定已在用 slug，此处保持一致。
+    if (!slug || !GATED_ROLES.has(slug)) {
       failOpenAllow('not-gated-role');
       return;
     }
 
-    const result = checkRoleDispatchGate(role);
+    const result = checkRoleDispatchGate(slug);
     if (result.ok) {
       allow();
     }
@@ -149,6 +155,27 @@ async function main() {
       `AGENTS.md R13/gate-chain.md：${result.message ?? result.reason}（reason=${result.reason}）。请先完成对应前置成果物或分派，再重试发起该角色。`,
     );
   } catch (err) {
+    // R36：判定期异常默认 fail-closed。本 Hook 拦的是「发起角色 Task」，deny 的代价最小
+    // （PM 仍可继续维护 process.md 修复问题），故直接 deny。
+    if (lib.getGateExceptionPolicy?.().failClosed) {
+      process.stderr.write(`[gate-role-sequence] fail-closed (runtime): ${err?.message ?? err}\n`);
+      try {
+        lib.recordFailOpenEvent?.('gate-role-sequence', 'runtime', err);
+      } catch {
+        /* 落盘失败不影响本次判定 */
+      }
+      process.stdout.write(
+        JSON.stringify(
+          lib.buildGateExceptionVerdict({
+            hook: 'gate-role-sequence',
+            context: 'runtime',
+            err,
+            channel: 'task',
+          }).output,
+        ),
+      );
+      process.exit(0);
+    }
     failOpenAllow('runtime', err, lib);
   }
 }

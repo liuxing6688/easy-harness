@@ -5,71 +5,16 @@
  * 脚手架：./_harness.mjs；共享 fixture：./_fixtures.mjs
  */
 import {
-  test, fixtureProcess, cleanup, assert, path, fs,
-  isGatedDevPath, parseWorkflowState, checkIterationArtifacts, checkHotfixDesign,
-  isCancelledProcessFile, checkRoleDispatchGate, checkBatchApiTestReport, isApiTestExempt,
-  checkBatchStorageReconciliationReport, isStorageReconciliationExempt, isE2eExempt,
-  isLintExempt, readLintResult, checkLintClean, isDupCheckExempt, isSecurityScanExempt,
-  readStaticScanResult, checkStaticScanClean, hasUnresolvedIssues, isProcessBlocked,
-  checkDesignProblemListStructure, checkRequirementCoverageMatrix, extractP0RequirementIds,
-  checkDesignReviewClean, checkTechSelectionConfirmed, checkDesignReviewConclusion,
-  checkHotfixP0Impact, checkHotfixP0InterfaceStorageMention, recordHotfixP0SoftReminder,
-  recordFailOpenEvent, hasResolvedDesignIssues, extractQeDispatchTaskPacks,
-  getDevLineStatusForTaskPack, ROOT_CONVERSATION_STATE, DISPATCHED_ROLES_STATE,
-  recordRootConversationId, checkLiteModeConfirmed, hasLiteModeConfirmation, getWorkflowMode,
-  getDeclaredWorkflowMode, readRootConversationId, isRootConversationCaller, recordDispatchedRole,
-  readRecentlyDispatchedRoles, isGatedRoleArtifactPath, expectedRolesForPath,
-  checkRolePathPermission, collectActiveRoleSlugs, checkReconEvidenceRef,
-  excerptInDesignAnchorWindow, extractDesignSectionWindow,
-  resolveLintCommand, computeLintGate, resolveDupCommand, resolveSecurityCommand,
-  computeSubGate, computeStaticScanGate,
-  snapshotLintResult, restoreLintResult, writeLintResult, clearLintResult,
-  snapshotStaticScanResult, restoreStaticScanResult, writeStaticScanResult, clearStaticScanResult,
-  snapshotRootConversationState, restoreRootConversationState, clearRootConversationState,
-  snapshotReconDir, restoreReconDir, writeReconEvidence, clearReconDir, ensureDefaultReconEvidence,
-  snapshotDispatchedRoles, restoreDispatchedRoles, clearDispatchedRoles,
-  PROJECT_ROOT, FIXTURE_ROOT,
+  test, fixtureProcess, assert, parseWorkflowState, isDupCheckExempt, isSecurityScanExempt,
+  readStaticScanResult, checkStaticScanClean, resolveDupCommand, resolveSecurityCommand,
+  computeSubGate, computeStaticScanGate, snapshotStaticScanResult, restoreStaticScanResult,
+  writeStaticScanResult, clearStaticScanResult,
 } from './_harness.mjs';
 
 import {
-  R18_DIMS,
-  makeCleanDplForSelftest,
-  SELFTEST_REQ_LIST,
-  SELFTEST_REQ_LIST_3P0,
-  SELFTEST_DPL_CLEAN,
-  SELFTEST_DPL_UNRESOLVED,
-  SELFTEST_TECH_CONFIRM,
-  liteModeConfirmSection,
-  hotfixProcessBody,
-  HOTFIX_STRUCTURED_API_STORAGE_REPORT,
-  makeQeDispatchProcess,
-  R14_PROGRESS_BATCH_DONE,
-  API_REPORT_EMPTY,
-  API_REPORT_FILLED,
-  API_EXEMPT_CONFIRM_PROCESS,
-  API_NA_GATED,
-  STORAGE_RECON_HEADER,
-  STORAGE_RECON_SEP,
-  STORAGE_RECON_BOTH,
-  STORAGE_RECON_API_ONLY,
-  STORAGE_RECON_E2E_ONLY,
-  STORAGE_RECON_BAD_MEDIUM,
-  STORAGE_RECON_EMPTY,
-  STORAGE_EXEMPT_CONFIRM_PROCESS,
-  STORAGE_NA_GATED,
-  R15_QE_DONE,
-  LINT_PASS,
-  LINT_FAIL,
-  LINT_NA_GATED,
-  LINT_EXEMPT_CONFIRM_PROCESS,
-  R16_QE_DONE,
-  STATIC_SCAN_PASS,
-  STATIC_SCAN_DUP_FAIL,
-  STATIC_SCAN_SECURITY_FAIL,
-  DUP_NA_GATED,
-  SECURITY_NA_GATED,
-  DUP_EXEMPT_CONFIRM_PROCESS,
-  SECURITY_EXEMPT_CONFIRM_PROCESS
+  liteModeConfirmSection, R16_QE_DONE, STATIC_SCAN_PASS, STATIC_SCAN_DUP_FAIL,
+  STATIC_SCAN_SECURITY_FAIL, DUP_NA_GATED, SECURITY_NA_GATED, DUP_EXEMPT_CONFIRM_PROCESS,
+  SECURITY_EXEMPT_CONFIRM_PROCESS,
 } from './_fixtures.mjs';
 
 console.log('== R16：静态代码质量门禁纯函数判据 ==');
@@ -80,6 +25,17 @@ test('R16: resolveDupCommand/resolveSecurityCommand 覆盖优先于默认值', (
   assert.equal(resolveSecurityCommand({ override: 'gitleaks detect' }), 'gitleaks detect');
   assert.ok(resolveSecurityCommand({ override: null }).includes('gitleaks-secret-scanner'));
   assert.equal(resolveSecurityCommand({ override: '' }), null);
+});
+test('R16: 默认重复代码命令须以 --threshold 生效，且不得含 --exitCode（回归）', () => {
+  const cmd = resolveDupCommand({ override: null });
+  // jscpd-rs 的 --exitCode 语义是「检出任何重复即用该退出码」，与 --threshold 无关；
+  // 二者同时出现会使 5% 阈值完全失效，门禁退化为零重复容忍 ⇒ 真实项目永远过不了 R16。
+  assert.doesNotMatch(
+    cmd,
+    /--exitCode/,
+    '默认命令重新引入了 --exitCode：会使 --threshold 5 失效，门禁退化为零重复容忍',
+  );
+  assert.match(cmd, /--threshold\s+5\b/, '默认命令须保留 5% 阈值（R16 声明的判据）');
 });
 test('R16: computeSubGate —— 有命令且退出码 0 才 gatePassed', () => {
   assert.equal(computeSubGate({ command: 'jscpd .', exitCode: 0 }).gatePassed, true);

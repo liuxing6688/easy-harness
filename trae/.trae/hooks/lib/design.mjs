@@ -19,7 +19,8 @@ import {
   sectionHasDataRow,
   isProcessBlocked,
   hasUnresolvedIssues,
-  readTextFileSafe
+  readTextFileSafe,
+  recordGateExceptionLedgerEntry
 } from './core.mjs';
 import { checkRequirementReady } from './iteration.mjs';
 
@@ -492,8 +493,45 @@ export function recordHotfixP0SoftReminder(content) {
 }
 
 /**
+ * 把「## 阻塞原因」里的出厂占位「无」替换成具体阻塞条目（逐行处理，不用整段正则）。
+ *
+ * 历史实现用 `/## 阻塞原因\s*\n+无\s*(?=\n## |\n*$)/` 匹配，**匹配不上出厂模板**——
+ * 模板里「无」后面紧跟两行 `>` 使用说明，先行断言要求的 `\n## ` 或结尾都不成立。
+ * 后果是门禁 fail-open 时只置了 `blocking: true`、却没写阻塞原因，与 **R35** 的
+ * 「实质阻塞原因」判据配合时会显得自相矛盾（门禁自己写的阻塞过不了门禁自己的证据校验）。
+ * 现改为逐行定位那一行裸「无」，保留其后的引用块说明。
+ */
+function fillBlockingReason(content, hookName, context) {
+  if (!/## 阻塞原因/.test(content)) return content;
+  const lines = content.split('\n');
+  let inSection = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim();
+    if (/^##\s/.test(line)) {
+      if (inSection) break; // 已离开本节，说明没有裸「无」（可能已有实质内容）
+      inSection = /^##\s*阻塞原因\s*$/.test(line);
+      continue;
+    }
+    if (!inSection) continue;
+    if (line !== '无') continue;
+    lines[i] = [
+      `- 阻塞原因：门禁 fail-open 异常（${hookName}/${context}），待项目经理处理`,
+      '- 待决事项：核查 stderr 与「## 门禁异常事件」，修复后门禁后清除 blocking',
+      '- 已产出成果物：见门禁异常事件',
+    ].join('\n');
+    return lines.join('\n');
+  }
+  return content;
+}
+
+/**
  * `.trae/harness/spec/mechanical-gates.md` §8.4：fail-open 时将异常持久化为 process.md 阻塞事件（cancelled 流程不写）。
  * 写入失败时仅 stderr，不影响 fail-open 放行。
+ *
+ * **R35 联动**：`process.md` 落盘成功后，同一条事件还会登记到 Hook 独占写入的旁路台账
+ * （`recordGateExceptionLedgerEntry`）。stop 门禁的「机器起源」释放分支要两侧指纹对得上，
+ * 否则代理自己往表格里补一行就能解除阻塞。登记放在写盘**之后**：若顺序反过来，
+ * `process.md` 写失败会留下一条无主台账条目，反倒成了可被抄用的凭证。
  */
 export function recordFailOpenEvent(hookName, context, err) {
   if (!err) return { ok: false, reason: 'no-error' };
@@ -540,14 +578,10 @@ export function recordFailOpenEvent(hookName, context, err) {
       content = `${content.trimEnd()}\n\n${header}`;
     }
 
-    if (/## 阻塞原因/.test(content)) {
-      content = content.replace(
-        /## 阻塞原因\s*\n+无\s*(?=\n## |\n*$)/,
-        `## 阻塞原因\n\n- 阻塞原因：门禁 fail-open 异常（${hookName}/${context}），待项目经理处理\n- 待决事项：核查 stderr 与「## 门禁异常事件」，修复后门禁后清除 blocking\n- 已产出成果物：见门禁异常事件\n`,
-      );
-    }
+    content = fillBlockingReason(content, hookName, context);
 
     fs.writeFileSync(processPath, content, 'utf8');
+    recordGateExceptionLedgerEntry({ ts, hook: hookName, context, summary: msg });
     return { ok: true, reason: 'recorded' };
   } catch (writeErr) {
     process.stderr.write(

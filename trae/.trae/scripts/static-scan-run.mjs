@@ -10,8 +10,10 @@
  * 覆盖 > 框架默认（jscpd-rs / gitleaks-secret-scanner，经 npx）。跨技术栈通用，
  * 不做 per-stack 探测（本框架要求 Node.js >= 18）。
  *
- * 产物：`test-results/qe/.static-scan-result.json`
+ * 产物：`test-results/qe/.static-scan-result.json`（含 **R34** `execProof` 执行证明）
  *   gatePassed = duplication.gatePassed && security.gatePassed
+ *   **R38**：任一子项因工具不可用失败时 `toolUnavailable: true` 上浮（离线/代理环境下
+ *   `npx --yes` 拉不到 jscpd-rs / gitleaks 与「真有重复代码」不再是同一个失败）。
  * 消费方：`gate-stop-workflow` / `gate-role-sequence`。
  * 反弱化：禁止擅自提高 jscpd 阈值或扩大 ignore（见 mechanical-gates.md R16）。
  *
@@ -28,6 +30,7 @@ import {
   computeSubGate,
   computeStaticScanGate,
 } from './static-scan-run-lib.mjs';
+import { attachExecutionProof } from '../hooks/lib/execproof.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -89,7 +92,7 @@ function runCheck(resolveCommand, overrideKey) {
     command,
     exitCode: run.exitCode,
     output: run.output,
-    ...computeSubGate({ command, exitCode: run.exitCode }),
+    ...computeSubGate({ command, exitCode: run.exitCode, output: run.output }),
   };
 }
 
@@ -111,6 +114,8 @@ function main() {
     executedAt: new Date().toISOString(),
   };
 
+  // R34：落签须在写盘之前，且签名覆盖两项子结果的 gatePassed。
+  attachExecutionProof('static-scan', result);
   writeResult(result);
   // 控制台省略子结果 output；完整输出已在产物文件中。
   console.log(

@@ -7,6 +7,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { roleProgressStats } from './role-path.mjs';
 
@@ -30,6 +31,14 @@ export const ROOT_CONVERSATION_STATE = path.join(
 export const DISPATCHED_ROLES_STATE = path.join(
   HOOKS_DIR,
   '.dispatched-roles.json',
+);
+/**
+ * **R35**：门禁异常事件旁路台账（只由 Hook 进程写入；R29 `runtime-marker`）。
+ * 见 `recordGateExceptionLedgerEntry` / `findCorroboratedGateExceptionEvent`。
+ */
+export const GATE_EXCEPTION_LEDGER = path.join(
+  HOOKS_DIR,
+  '.gate-exception-ledger.json',
 );
 
 /** R17：对账证据文件目录（相对项目根） */
@@ -186,6 +195,13 @@ const DEFAULT_CONFIG = {
   qe: {
     commands: {},
   },
+  // **R32**：生产启动冒烟。`command` 留空表示按 gated-artifacts / package.json 探测；
+  // `maxAgeHours` 控制冒烟结果的新鲜度上限，防止一次通过后长期复用。
+  te: {
+    startupSmoke: {
+      maxAgeHours: 24,
+    },
+  },
   // **R5 加强**：顶层会话 id 基准的有效期。基准一旦写入历史实现永不覆盖，
   // 遗留/污染值会使顶层代写拦截永久静默失效（实测可复现），故加 TTL 自愈。
   identity: {
@@ -194,6 +210,17 @@ const DEFAULT_CONFIG = {
   // **R31**：同一对象累计回退超过该次数即由 stop 门禁要求 PM 阻塞并请用户决策。
   rollback: {
     limit: 3,
+  },
+  // **R34**：证据产物执行证明。`enforce: false` 为用户级逃生开关（见 execproof.mjs）。
+  execProof: {
+    enforce: true,
+    keyTtlMinutes: 15,
+    historyPerKind: 8,
+  },
+  // **R36**：判定期异常的处置策略。`deny` = fail-closed（默认）；`allow` = 回退到历史
+  // fail-open 行为。这是**放松型**旋钮，故只认 harness.config.json（R29 锁定，仅用户可改）。
+  gateException: {
+    onJudgmentError: 'deny',
   },
 };
 
@@ -441,8 +468,15 @@ export function loadHarnessConfig() {
     _configCache = { ...DEFAULT_CONFIG, ...parsed };
     _configCache.gatedPaths = { ...DEFAULT_CONFIG.gatedPaths, ...parsed.gatedPaths };
     _configCache.qe = { ...DEFAULT_CONFIG.qe, ...parsed.qe };
+    _configCache.te = { ...DEFAULT_CONFIG.te, ...parsed.te };
+    _configCache.te.startupSmoke = {
+      ...DEFAULT_CONFIG.te.startupSmoke,
+      ...parsed.te?.startupSmoke,
+    };
     _configCache.identity = { ...DEFAULT_CONFIG.identity, ...parsed.identity };
     _configCache.rollback = { ...DEFAULT_CONFIG.rollback, ...parsed.rollback };
+    _configCache.execProof = { ...DEFAULT_CONFIG.execProof, ...parsed.execProof };
+    _configCache.gateException = { ...DEFAULT_CONFIG.gateException, ...parsed.gateException };
     return _configCache;
   }
   _configCache = DEFAULT_CONFIG;
@@ -486,9 +520,13 @@ export function getMergedGatedPaths() {
       ...(extra.extraRootPatterns ?? []),
     ],
     docsAllowedExtensions: config.gatedPaths.docsAllowedExtensions ?? ['.md', '.mdx', '.txt'],
+    // **R29 加强**：`extensionGateExemptDirs` 只取 harness.config.json（R29 锁定、须用户
+    // 本人编辑），**不再**合并 gated-artifacts.json 的 `extraExtensionGateExemptDirs`。
+    // 该字段是纯粹的「放松型」旋钮：写入 `["src"]` 即可让 R6 代码扩展名门禁对整个 src/
+    // 失效，而 gated-artifacts.json 由 SA（被约束方）书写。上方 extra* 各项都是
+    // 「收紧型」（只增加受门禁范围），故保留合并；放松型一律回收到用户手中（R12）。
     extensionGateExemptDirs: [
       ...(config.gatedPaths.extensionGateExemptDirs ?? DEFAULT_EXTENSION_GATE_EXEMPT_DIRS),
-      ...(extra.extraExtensionGateExemptDirs ?? []),
     ],
   };
 }
@@ -498,6 +536,107 @@ export function getIdentityBaselineTtlMs() {
   const hours = loadHarnessConfig().identity?.baselineTtlHours;
   const n = Number(hours);
   return Number.isFinite(n) && n > 0 ? n * 60 * 60 * 1000 : 12 * 60 * 60 * 1000;
+}
+
+/**
+ * **R36**：判定期异常是否 fail-closed。
+ *
+ * §8.4 长期披露一个已知缺陷：入口脚本自行 `try/catch` 并以退出码 0 输出合法
+ * `{"permission":"allow"}`，属「Hook 成功」，故 `hooks.json` 里的 `failClosed: true`
+ * **永远不会被平台触发**——判定期异常的最终语义完全由脚本自己的 fail-open 决定。
+ * 后果是：**任何能让判定逻辑抛异常的 `process.md` 都能打开门禁**，而 `process.md`
+ * 恰由被约束方书写。§8.4 自己写出了修法（区分 lib 加载失败与判定期异常）但未实施。
+ *
+ * 本函数即该修法的开关：默认 `deny`（判定期异常 fail-closed），
+ * `harness.config.json → gateException.onJudgmentError: "allow"` 可回退到历史行为。
+ * 该文件受 R29 锁定，代理改不了，只有用户能在门禁自身出 bug 时解锁。
+ *
+ * @returns {{ failClosed: boolean, mode: 'deny'|'allow' }}
+ */
+export function getGateExceptionPolicy() {
+  const mode = loadHarnessConfig().gateException?.onJudgmentError;
+  const normalized = mode === 'allow' ? 'allow' : 'deny';
+  return { failClosed: normalized === 'deny', mode: normalized };
+}
+
+/**
+ * **R36**：按通道生成判定期异常的裁决（各 Hook 入口共用，避免四份近似文案漂移）。
+ *
+ * 裁决按通道选取「最小可用的收紧语义」——目标是不静默放行，同时不把项目锁死：
+ *   - `write`：`deny`；但对活跃 `process.md` 保留**修复通道**放行。判定期异常最常见的
+ *     成因就是 process.md 结构损坏，而修它必须能写它；一并拒绝会造成代理无法自愈、
+ *     只能人工编辑的死局。该例外是刻意保留的残留缺口，记在 §8.7 边界表里。
+ *   - `shell`：`deny`（修 process.md 应走 Write 通道，那边已有例外，此处再开只增绕过面）。
+ *   - `task`：`deny`（PM 仍可继续维护 process.md，代价最小）。
+ *   - `toolchain`：`ask`。该 Hook 的正常拦截语义本就是 ask；用 deny 会把一台缺工具链的
+ *     机器彻底锁死，而 ask 已经能达到「不静默放行」的目的。
+ *   - `stop`：`followup`（stop 通道没有 deny 语义，「收紧」即等于不放行收尾）。
+ *
+ * @param {{ hook: string, context: string, err: unknown, channel: 'write'|'shell'|'task'|'toolchain'|'stop', repairPaths?: string[] }} params
+ * @returns {{ verdict: 'allow'|'deny'|'ask'|'followup', output: object }}
+ */
+export function buildGateExceptionVerdict({ hook, context, err, channel, repairPaths = [] }) {
+  const brief = String(err?.message ?? err).slice(0, 200);
+  const common =
+    'AGENTS.md R36 / mechanical-gates.md §8.4：判定期异常不再静默放行（历史实现在此 fail-open，' +
+    '等于「能让判定逻辑抛异常就能打开门禁」，而判定输入 process.md 恰由被约束方书写）。' +
+    '请先修复导致异常的输入——最常见是活跃 process.md 结构损坏（frontmatter / 章节标题 / 表格被破坏），' +
+    '并核查其「## 门禁异常事件」新增行。若确认是门禁自身缺陷，须把结论呈现给用户，' +
+    '由**用户本人**在 `.cursor/harness.config.json` 设 `gateException.onJudgmentError: "allow"` ' +
+    '临时恢复 fail-open（该文件受 R29 锁定，代理不得修改）。';
+
+  if (channel === 'write' && repairPaths.length > 0) {
+    return { verdict: 'allow', output: { permission: 'allow' }, repairPaths };
+  }
+  if (channel === 'stop') {
+    return {
+      verdict: 'followup',
+      output: {
+        followup_message:
+          `【流程门禁】（R36 判定期异常）stop 门禁在计算流程状态时抛出异常（${context}：${brief}），` +
+          '无法判定流程是否闭环，故**不放行**本次收尾。' +
+          '请调用 project-manager 核查 stderr 与 process.md「## 门禁异常事件」新增行并修正；' +
+          '若确认是门禁自身缺陷，用 AskQuestion 请用户决策并按 R35 在「## 阻塞原因」与「## 用户确认记录」留痕。' +
+          '确需恢复旧的 fail-open 行为时，须由**用户本人**在 `.cursor/harness.config.json` 设 `gateException.onJudgmentError: "allow"`。',
+      },
+    };
+  }
+  if (channel === 'toolchain') {
+    return {
+      verdict: 'ask',
+      output: {
+        permission: 'ask',
+        user_message: `工具链安装门禁（R36 判定期异常）：门禁在判定本次命令时抛出异常（${context}：${brief}），无法确定是否为需要授权的系统级安装命令，故转为请你确认。`,
+        agent_message: `${common} 若这确实是系统级工具链安装命令，请先按流程询问用户安装路径再重试。`,
+      },
+    };
+  }
+  const subject =
+    channel === 'shell'
+      ? '本次 Shell 命令'
+      : channel === 'task'
+        ? '本次角色派发的前置条件'
+        : '本次写入';
+  const extra =
+    channel === 'write'
+      ? ' 对活跃 process.md 本身的写入仍被放行，可由 project-manager 直接修复。'
+      : channel === 'task'
+        ? ' project-manager 对 process.md 的写入不受本次拒绝影响。'
+        : ' 修 process.md 请改用 Write 类工具（该通道保留了修复例外）。';
+  return {
+    verdict: 'deny',
+    output: {
+      permission: 'deny',
+      user_message: `流程门禁（R36 判定期异常）：门禁在判定${subject}时抛出异常（${context}：${brief}），无法确定是否合规，故按 fail-closed 拒绝。（Hook：${hook}）`,
+      agent_message: `${common}${extra}`,
+    },
+  };
+}
+
+/** **R32**：生产启动冒烟结果的新鲜度上限（小时） */
+export function getStartupSmokeMaxAgeHours() {
+  const n = Number(loadHarnessConfig().te?.startupSmoke?.maxAgeHours);
+  return Number.isFinite(n) && n > 0 ? n : 24;
 }
 
 export function getMergedDotCursorExemptPatterns() {
@@ -521,9 +660,25 @@ export function getToolchainInstallPatterns() {
     .map((p) => new RegExp(p, 'i'));
 }
 
-/** 提取指定 `## 标题` 章节正文 */
+/**
+ * 章节标题允许的编号前缀（如 `## 6. 隐性需求确认记录`、`## 3.4、界面与交互期望`）。
+ *
+ * 历史实现要求 `##` 后紧跟标题文字，导致出厂模板 `requirement-spec.md` 的
+ * `## 6. 隐性需求确认记录` 永远解析不到——需求分析师照模板填写也过不了 R19，
+ * 且 Hook 报出的是「缺少真实数据行」这一指向错误的理由。自测夹具用的是自拼的
+ * 无编号标题，故 394 条回归全绿也抓不到。
+ *
+ * 放宽的只是「如何定位章节」，章节内容判据（表头、枚举、追溯、数据行非空等）
+ * 完全不变，故不构成 R12 意义上的放松。
+ */
+const SECTION_NUMBER_PREFIX = String.raw`(?:\d+(?:\.\d+)*\s*[.、)]?\s*)?`;
+
+/** 提取指定 `## 标题` 章节正文（容忍编号前缀；标题须位于行首，不匹配正文中的 `##`） */
 export function extractSection(content, title) {
-  const re = new RegExp(`##\\s*${title}\\s*([\\s\\S]*?)(?=\\n##\\s|$)`);
+  if (!content || typeof content !== 'string') return null;
+  const re = new RegExp(
+    `(?:^|\\n)##\\s*${SECTION_NUMBER_PREFIX}${title}\\s*([\\s\\S]*?)(?=\\n##\\s|$)`,
+  );
   const m = content.match(re);
   return m ? m[1] : null;
 }
@@ -676,6 +831,249 @@ export function isProcessBlocked(content) {
   return false;
 }
 
+/**
+ * `## 阻塞原因` 正文里属于**模板/占位**、不构成实质阻塞理由的写法。
+ * 出厂模板正文是裸「无」加两行引用块说明；此外常见占位是「—」「-」「待补」「TBD」等。
+ */
+const BLOCKING_PLACEHOLDER_RE = /^(无|—|-|n\/a|na|待补|待填|待定|tbd|todo|\(.*\)|（.*）)$/i;
+
+/**
+ * `## 阻塞原因` 是否含**实质**内容（非模板、非占位）。
+ * 引用块（`>` 开头，出厂模板的使用说明）与空行一律不计入。
+ */
+export function hasSubstantiveBlockingReason(content) {
+  const body = extractSection(content ?? '', '阻塞原因');
+  if (!body) return false;
+  for (const raw of body.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('>')) continue;
+    // 去掉列表符号与「阻塞原因：」前缀后判断剩余文本是否为占位
+    const text = line
+      .replace(/^[-*+]\s*/, '')
+      .replace(/^阻塞原因\s*[:：]\s*/, '')
+      .trim();
+    if (!text || BLOCKING_PLACEHOLDER_RE.test(text)) continue;
+    // 去标点空白后须有实质字数，防「……」「??」之类过关
+    if (text.replace(/[\s\p{P}\p{S}]/gu, '').length >= 4) return true;
+  }
+  return false;
+}
+
+/**
+ * 解析「## 门禁异常事件」里尚未处理的行（§8.4 `recordFailOpenEvent` 写入的格式）。
+ * @returns {{ ts: string, hook: string, context: string, summary: string }[]}
+ */
+function parsePendingGateExceptionRows(content) {
+  const body = extractSection(content ?? '', '门禁异常事件');
+  if (!body) return [];
+  const pending = [];
+  for (const table of parseMarkdownTables(body)) {
+    const idxOf = (re) => table.headers.findIndex((h) => re.test(h));
+    const tsIdx = idxOf(/时间/);
+    const hookIdx = idxOf(/hook/i);
+    const contextIdx = idxOf(/上下文/);
+    const summaryIdx = idxOf(/异常摘要/);
+    const statusIdx = idxOf(/处理状态/);
+    for (const row of table.rows) {
+      if (!row.some((c) => (c ?? '').trim())) continue;
+      if (hookIdx >= 0 && !(row[hookIdx] ?? '').trim()) continue;
+      const status = statusIdx >= 0 ? (row[statusIdx] ?? '').trim() : '';
+      if (statusIdx >= 0 && /已处理|已关闭|已解决/.test(status)) continue;
+      pending.push({
+        ts: tsIdx >= 0 ? (row[tsIdx] ?? '').trim() : '',
+        hook: hookIdx >= 0 ? (row[hookIdx] ?? '').trim() : '',
+        context: contextIdx >= 0 ? (row[contextIdx] ?? '').trim() : '',
+        summary: summaryIdx >= 0 ? (row[summaryIdx] ?? '').trim() : '',
+      });
+    }
+  }
+  return pending;
+}
+
+/** 是否存在**声称**由 Hook 写入、尚未处理的门禁异常事件行（不校验出处，见下方台账判据） */
+export function hasPendingGateExceptionEvent(content) {
+  return parsePendingGateExceptionRows(content).length > 0;
+}
+
+/** 门禁异常事件行 → 台账指纹（时间戳 + Hook + 上下文 + 异常摘要） */
+export function gateExceptionEventDigest({ ts, hook, context, summary } = {}) {
+  return createHash('sha256')
+    .update([ts ?? '', hook ?? '', context ?? '', summary ?? ''].join('\n'), 'utf8')
+    .digest('hex')
+    .slice(0, 32);
+}
+
+/** 读取 R35 旁路台账；缺失/损坏时返回空台账（不抛，见 §8.8 防死锁） */
+export function readGateExceptionLedger() {
+  const data = readJsonFileSafe(GATE_EXCEPTION_LEDGER);
+  if (!data || typeof data !== 'object' || !Array.isArray(data.entries)) {
+    return { version: 1, entries: [] };
+  }
+  return { version: 1, entries: data.entries };
+}
+
+const GATE_EXCEPTION_LEDGER_MAX = 50;
+
+/**
+ * **R35**：把一条门禁异常事件登记到旁路台账。**只应由 `recordFailOpenEvent` 调用。**
+ *
+ * 台账文件受 R29 `runtime-marker` 保护（写文件与 Shell 两条通道均 deny），
+ * 因此代理无法凭空造出一条与 `process.md` 表格行对得上的台账记录。
+ */
+export function recordGateExceptionLedgerEntry({ ts, hook, context, summary } = {}) {
+  try {
+    const ledger = readGateExceptionLedger();
+    ledger.entries.push({
+      digest: gateExceptionEventDigest({ ts, hook, context, summary }),
+      ts: ts ?? '',
+      hook: hook ?? '',
+      context: context ?? '',
+      recordedAt: new Date().toISOString(),
+    });
+    ledger.entries = ledger.entries.slice(-GATE_EXCEPTION_LEDGER_MAX);
+    fs.mkdirSync(path.dirname(GATE_EXCEPTION_LEDGER), { recursive: true });
+    fs.writeFileSync(GATE_EXCEPTION_LEDGER, `${JSON.stringify(ledger, null, 2)}\n`, 'utf8');
+    return { ok: true };
+  } catch (err) {
+    // 登记失败不阻断 fail-open 落盘；代价是这次阻塞走不了「机器起源」分支，
+    // 须由 PM 按人类起源双证据补齐（收紧方向，符合 R12）。
+    process.stderr.write(
+      `[recordGateExceptionLedgerEntry] failed: ${err?.message ?? err}\n`,
+    );
+    return { ok: false, reason: 'write-failed' };
+  }
+}
+
+/**
+ * **R35**：找出一条**有台账出处、且尚未用于释放过**的门禁异常事件。
+ *
+ * 2026-07-30 复核复现的问题：机器起源分支原本只看 `process.md` 里有没有一行「待处理」，
+ * 而该章节正由被约束方（PM）书写——代理自己补一行表格即可解除 stop 门禁的全部推进判据，
+ * 比它要补强的「实质阻塞原因 + 用户决策留痕」双证据分支还便宜。注释里写的
+ * 「不是代理自述，本身即为可信依据」在实现上并不成立。
+ *
+ * 现要求两侧对上：`process.md` 的行 + Hook 独占写入的旁路台账里同指纹的条目。
+ * 并且每条台账条目只能释放**一次**（`releasedAt`），避免把一条真实发生过的历史异常
+ * 反复抄回表格里当永久免死金牌。
+ *
+ * @returns {{ ok: boolean, digest?: string, reason?: string }}
+ */
+export function findCorroboratedGateExceptionEvent(content) {
+  const rows = parsePendingGateExceptionRows(content);
+  if (rows.length === 0) return { ok: false, reason: 'no-pending-event' };
+  const entries = readGateExceptionLedger().entries;
+  for (const row of rows) {
+    const digest = gateExceptionEventDigest(row);
+    const entry = entries.find((e) => e?.digest === digest);
+    if (!entry) continue;
+    if (entry.releasedAt) continue;
+    return { ok: true, digest };
+  }
+  return { ok: false, reason: entries.length === 0 ? 'no-ledger-entry' : 'event-not-corroborated' };
+}
+
+/**
+ * **R35**：把一条台账条目标记为「已用于释放 stop 门禁」（一次性）。
+ * 由 `gate-stop-workflow` 在按机器起源放行时调用；写失败只记 stderr。
+ */
+export function consumeGateExceptionRelease(digest) {
+  if (!digest) return { ok: false, reason: 'no-digest' };
+  try {
+    const ledger = readGateExceptionLedger();
+    const entry = ledger.entries.find((e) => e?.digest === digest);
+    if (!entry) return { ok: false, reason: 'not-found' };
+    if (entry.releasedAt) return { ok: true, reason: 'already-released' };
+    entry.releasedAt = new Date().toISOString();
+    fs.writeFileSync(GATE_EXCEPTION_LEDGER, `${JSON.stringify(ledger, null, 2)}\n`, 'utf8');
+    return { ok: true };
+  } catch (err) {
+    process.stderr.write(`[consumeGateExceptionRelease] failed: ${err?.message ?? err}\n`);
+    return { ok: false, reason: 'write-failed' };
+  }
+}
+
+/** 用户决策留痕：`## 用户确认记录` 中与阻塞/待决相关、且体现「问过用户」的行 */
+export function hasBlockingDecisionTrace(content) {
+  const body = extractSection(content ?? '', '用户确认记录');
+  if (!body) return false;
+  const topicRe = /阻塞|blocking|待决|待用户|暂停|挂起|决策/i;
+  const stanceRe = /askquestion|用户|确认|决策|选择|答复|回复|裁决/i;
+  for (const raw of body.split('\n')) {
+    const line = raw.trim();
+    if (!line.startsWith('|')) continue;
+    if (/^\|[\s|:-]+\|?$/.test(line)) continue;
+    if (/确认项/.test(line) && /时间/.test(line) && /用户原话/.test(line)) continue;
+    if (topicRe.test(line) && stanceRe.test(line)) return true;
+  }
+  return false;
+}
+
+/**
+ * **R35**：`blocking: true` 释放 stop 门禁前须有配套证据。
+ *
+ * ## 为什么需要这条
+ *
+ * `gate-stop-workflow` 的判据链最前面有一个无条件放行分支：`blocking: true` 即当轮放行。
+ * §8.7 把 stop 门禁的强度上限归结为 `loop_limit: 3`，但实际上代理不必硬扛三轮——
+ * 让项目经理写一行 `blocking: true` 就当轮解除了全部催促。更微妙的是 **R31** 回退上限
+ * 注入的 followup **本身就在指示代理去写这一行**。于是「测试/E2E/lint 是否做完」这条
+ * 主要靠 stop 门禁施压的约束，释放成本是一行 frontmatter，而不是三个回合。
+ *
+ * ## 判据（二者之一即放行）
+ *
+ * 1. **机器起源**：`## 门禁异常事件` 有未处理行，**且**该行在 Hook 独占写入的旁路台账
+ *    （`GATE_EXCEPTION_LEDGER`，R29 `runtime-marker`）里有同指纹、未被用过的条目
+ *    ⇒ 确实是 Hook 自己写的（`recordFailOpenEvent`），不是代理自述；
+ * 2. **人类起源**：`## 阻塞原因` 有实质内容（非模板「无」/占位） **且**
+ *    `## 用户确认记录` 有一行阻塞/待决相关的用户决策留痕。
+ *
+ * 两者都不满足 ⇒ 视为「无依据自述阻塞」，stop 门禁**不放行**，改为注入 followup
+ * 要求补齐证据或解除阻塞。
+ *
+ * ## 为什么机器起源要查台账（2026-07-30 复核修正）
+ *
+ * 该分支原本只看 `process.md` 里有没有一行「待处理」，而这一章节恰由被约束方（PM）
+ * 书写：代理自补一行表格即可解除 stop 门禁的全部推进判据，比它本该补强的双证据分支
+ * **更便宜**——等于把「一行 frontmatter 静默收尾」换成了「一行 frontmatter + 一行表格」。
+ * 现改为与旁路台账对指纹，且每条台账条目只能释放一次。
+ *
+ * ## 能力边界
+ *
+ * 与 §8.7 边界 1 同源：人类起源的两项证据仍由 PM 书写，本判据只证明
+ * 「阻塞这件事被写清楚了、并声称问过用户」，不证明真的问过。它消除的是
+ * 「一行 `blocking: true` 直接静默收尾」这条零成本路径。
+ */
+export function checkBlockingReleaseEvidence(content) {
+  const machineOrigin = findCorroboratedGateExceptionEvent(content);
+  if (machineOrigin.ok) {
+    return { ok: true, reason: 'gate-exception-originated', digest: machineOrigin.digest };
+  }
+  const substantive = hasSubstantiveBlockingReason(content);
+  const trace = hasBlockingDecisionTrace(content);
+  if (substantive && trace) return { ok: true, reason: 'evidenced' };
+  const forged = machineOrigin.reason === 'event-not-corroborated'
+    || machineOrigin.reason === 'no-ledger-entry';
+  const missing = [
+    ...(forged
+      ? ['「## 门禁异常事件」的未处理行在门禁旁路台账中查无出处（或已被用于释放过一次），不能作为机器起源依据']
+      : []),
+    ...(substantive ? [] : ['「## 阻塞原因」缺少实质内容（仍为出厂「无」或占位文本）']),
+    ...(trace ? [] : ['「## 用户确认记录」缺少阻塞/待决相关的用户决策留痕行']),
+  ];
+  return {
+    ok: false,
+    reason: substantive ? 'blocking-missing-decision-trace' : 'blocking-missing-reason',
+    missing,
+    message:
+      `R35：frontmatter 已置 \`blocking: true\`，但缺少配套证据——${missing.join('；')}。` +
+      '阻塞是 stop 门禁的释放阀，不得凭一行 frontmatter 就静默收尾。请由项目经理二者都补齐：' +
+      '①在「## 阻塞原因」写明具体阻塞原因 / 待决事项 / 已产出成果物；' +
+      '②用 AskQuestion 请用户就该阻塞做决策，并在「## 用户确认记录」补一行留痕' +
+      '（确认项含「阻塞」或「待决」，摘要含 AskQuestion 或用户决策内容）。' +
+      '若实际并未阻塞，请把 `blocking` 改回 `false`、「## 阻塞原因」改回裸「无」，并继续推进流程。',
+  };
+}
+
 /** 轻量模式（须 R20 用户确认后才生效） */
 export const LITE_WORKFLOW_MODES = Object.freeze(['hotfix', 'docs-only', 'single-task']);
 
@@ -698,7 +1096,9 @@ export function hasLiteModeConfirmation(content, mode) {
   const modePatterns = {
     hotfix: /hotfix|热修复|热修|修\s*bug/i,
     'docs-only': /docs-only|只改文档|仅改文档|仅文档/i,
-    'single-task': /single-task|单任务|小改动/i,
+    // R37 起 `single-task` 的定位是「增量迭代」，故意图词一并纳入增量类说法；
+    // 旧词（单任务/小改动）保留，避免既有项目的确认行失效（R12：不得因改口径回退门禁）。
+    'single-task': /single-task|单任务|小改动|增量迭代|增量/i,
   };
   const modeRe = modePatterns[m];
   for (const line of body.split('\n')) {

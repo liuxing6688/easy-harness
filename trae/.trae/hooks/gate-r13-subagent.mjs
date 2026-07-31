@@ -77,6 +77,8 @@ async function main() {
     isActiveProcessCancelled,
     deny,
     allow,
+    readClosureLock,
+    closureLockBlocksDev,
   } = lib;
 
   try {
@@ -114,6 +116,21 @@ async function main() {
     // R13：角色前置成果物校验
     const result = checkRoleDispatchGate(slug);
     if (result.ok) {
+      // R40 闭环锁：DE 角色额外校验——marker 存在时，未闭环不得开始新 DE 分派。
+      // 防止代理通过 PM→DE 分派链让 DE 重新活跃从而绕过 R21（R21 只看最近派发，
+      // 不看流程是否闭环）。回派 DE 须在 ## 回退计数表留痕（count > 0）作为依据。
+      if (slug === 'development-engineer') {
+        const lock = readClosureLock();
+        if (lock) {
+          const devBlock = closureLockBlocksDev(null, lock);
+          if (devBlock.blocked) {
+            deny(
+              devBlock.reason,
+              'AGENTS.md R40（闭环锁）：DE 子代理首次工具调用时校验未闭环状态。须先补完流程或由 PM 回派 DE（## 回退计数表留痕作回派依据）。',
+            );
+          }
+        }
+      }
       allow();
     }
 

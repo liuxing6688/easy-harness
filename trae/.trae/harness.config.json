@@ -211,5 +211,19 @@
   },
   "qe": {
     "commands": {}
+  },
+  "te": {
+    "startupSmoke": {
+      "maxAgeHours": 24
+    }
+  },
+  "execProof": {
+    "enforce": true,
+    "requireFreshArtifacts": true,
+    "keyTtlMinutes": 15,
+    "historyPerKind": 8
+  },
+  "gateException": {
+    "onJudgmentError": "deny"
   }
 }

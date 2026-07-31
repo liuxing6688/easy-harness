@@ -11,7 +11,8 @@
  *   - 回归：`node .cursor/scripts/gate-selftest.mjs` 与 `node .cursor/scripts/gate-scenarios.mjs`。
  *
  * 域一览：
- *   core      路径常量、stdin/allow/deny、process.md、配置、Markdown、R20、normalizePath
+ *   core      路径常量、stdin/allow/deny、process.md、配置、Markdown、R20、R35、R36、normalizePath
+ *   execproof R34 证据产物执行证明（nonce 签发 / 落签 / 验签）
  *   paths     R10 取消冻结、源码/Shell/工具链路径、assertDevGateOrDeny、R28/R29
  *   identity  R5 顶层会话 id、最近派发角色落盘
  *   role-path 角色↔成果物路径权限、进度统计（B1）
@@ -21,6 +22,7 @@
  *   dispatch  R13 角色派发、`parseWorkflowState`（供 stop 门禁）
  */
 export * from './lib/core.mjs';
+export * from './lib/execproof.mjs';
 export * from './lib/paths.mjs';
 export * from './lib/identity.mjs';
 export * from './lib/role-path.mjs';

@@ -26,6 +26,17 @@ import './r15-lint.mjs';
 import './r16-static-scan.mjs';
 import './r5-identity.mjs';
 import './te-smoke.mjs';
+import './r32-startup-smoke.mjs';
+import './r33-ui-expectation.mjs';
 import './r28-r31-hardening.mjs';
+// 2026-07-30 规约审核加固：R34 执行证明 / R35 阻塞释放证据 / R36 判定期异常 /
+// R37 single-task 增量档 / R38 工具不可用
+import './r34-exec-proof.mjs';
+import './r35-blocking-evidence.mjs';
+import './r36-gate-exception.mjs';
+import './r37-single-task.mjs';
+import './r38-tool-unavailable.mjs';
+import './templates-vs-gates.mjs';
+import './gated-artifacts-config.mjs';
 
 finishSelftest();

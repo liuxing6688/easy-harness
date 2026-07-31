@@ -9,6 +9,15 @@ test-results/
 .cursor/hooks/.root-conversation-id.json
 .cursor/hooks/.dispatched-roles.json
 
+# R34 证据产物执行证明的运行时状态：nonce 台账（公钥）与私钥交接目录。
+# 属本机单次会话状态，绝不可提交——提交台账等于把可复用的 nonce 分发出去。
+.cursor/hooks/.exec-proof-ledger.json
+.cursor/hooks/.exec-proof-pending/
+
+# R35 门禁异常事件旁路台账：Hook 独占写入的本机运行时状态，用于校验
+# 「## 门禁异常事件」里的行确实是门禁自己写的。提交它等于把可复用的释放凭证分发出去。
+.cursor/hooks/.gate-exception-ledger.json
+
 # 常见依赖/构建产物目录（按目标项目实际技术栈增补，非穷举；不影响门禁路径判定）
 node_modules/
 dist/

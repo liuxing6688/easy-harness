@@ -17,7 +17,8 @@
  * 凭证仅可由用户本人创建，用于一段时间内的批量预授权。
  *
  * 共享判据：`./workflow-gate-lib.mjs`（`isToolchainInstallCommand` / `hasToolchainInstallApproval`）。
- * 自锁防护（§8.4）：与其余 Hook 一致——lib/运行时异常 fail-open 放行。
+ * 自锁防护（§8.4 / **R36**）：**lib 加载失败** fail-open；**判定期异常**默认 fail-closed，
+ * 但降级为 `ask`（本 Hook 的正常拦截语义即 ask，deny 会把缺工具链的机器彻底锁死）。
  */
 /**
  * 门禁自锁逃生：写 stderr、可选落盘、stdout 输出 allow 后退出。
@@ -67,6 +68,29 @@ async function main() {
       'AGENTS.md gate-toolchain-install：请先使用 AskQuestion 询问用户工具链的现有路径或安装目录，然后直接重试本命令——本通道（beforeShellExecution）的 `ask` 会请用户批准，这就是有效的用户确认。**不要**自行创建 `.cursor/hooks/.toolchain-install-approved.json`：该凭证已按 **R29** 禁止代理写入（自签授权），只有用户本人可创建它来做一段时间内的批量预授权（须含 userConfirmed、有效时间戳与与本命令匹配的 commandHash）。',
     );
   } catch (err) {
+    // R36：判定期异常默认 fail-closed。本 Hook 的正常「未授权」出口就是 `ask`，
+    // 故异常时降级为 `ask` 而非 `deny`——既不静默放行，也不把一台缺工具链的机器锁死。
+    if (lib.getGateExceptionPolicy?.().failClosed) {
+      try {
+        lib.recordFailOpenEvent?.('gate-toolchain-install', 'runtime', err);
+      } catch {
+        /* 落盘失败不影响本次判定 */
+      }
+      process.stderr.write(
+        `[gate-toolchain-install] fail-closed→ask (runtime): ${err?.message ?? err}\n`,
+      );
+      process.stdout.write(
+        JSON.stringify(
+          lib.buildGateExceptionVerdict({
+            hook: 'gate-toolchain-install',
+            context: 'runtime',
+            err,
+            channel: 'toolchain',
+          }).output,
+        ),
+      );
+      process.exit(0);
+    }
     failOpenAllow('runtime', err, lib);
   }
 }

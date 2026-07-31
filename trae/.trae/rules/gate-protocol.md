@@ -6,57 +6,28 @@ alwaysApply: true
 
 # Trae 流程门禁调用协议（强制）
 
-## 0. 门禁声明（核心约束）
+## 0. 核心义务（常驻）
 
-本项目采用 **Trae 原生 Hook 自动拦截 + 顶层代理手动自检** 双保险机制：
+本项目门禁为**双保险**：Trae 原生 Hook（第一层，确定性拦截，`.trae/hooks.json` 在 `PreToolUse` / `SessionStart` / `Stop` 事件自动触发）+ 顶层代理手动自检（第二层，兜底保障）。两层共用同一套判定逻辑（`workflow-gate-lib.mjs` + `gate-*.mjs`），判据一致；本规则不放松任何门禁（R12）。
 
-- **原生 Hook（第一层，确定性拦截）**：`.trae/hooks.json` 遵循 Trae 标准格式（`PreToolUse` / `SessionStart` / `Stop` PascalCase 事件 + 嵌套 `hooks` 数组 + `matcher`/`command`/`timeout` 字段），Trae 客户端自动加载并在对应事件触发时执行 Hook 脚本，实现机械确定性拦截。PreToolUse stdout 使用 `hookSpecificOutput.permissionDecision`（`allow`/`deny`/`ask`）；Stop stdout 使用 `{decision:"block", reason}` 阻断收尾。
-- **手动自检（第二层，兜底保障）**：顶层代理在关键操作前仍须手动调用 `gate-check.mjs` 自检，作为 Hook 失效或未覆盖场景的兜底保障。本规则以 `alwaysApply: true` 持续注入上下文，与 `AGENTS.md` §4 / §8 文字约束互补。
+顶层代理在下列操作**前**，**必须**先运行 `node .trae/scripts/gate-check.mjs <子命令>` 自检（即使 Hook 已可能拦截，仍须手动自检以确保兜底），读取 stdout JSON 与退出码：
 
-两层机制共用同一套判定逻辑（`workflow-gate-lib.mjs` + 5 个 `gate-*.mjs`），确保判据一致。
+- 写入 / 编辑 / 删除任意文件 → `dev-write <filepath>`
+- 执行 Shell 命令（项目初始化 / 依赖安装 / 包管理等）→ `dev-shell "<command>"`
+- 执行系统级工具链安装（winget / brew / apt / choco 等）→ `toolchain "<command>"`
+- 发起受门禁角色 Task（`system-architect` / `requirement-reviewer` / `development-engineer` / `quality-engineer` / `test-engineer`）→ `role <role-name>`
+- 拟结束当前回合（向用户交付总结）→ `stop`
 
-**R12（只可加强不可放松）适配**：本方案不放松任何判据——gate 脚本的判定逻辑（R3/R6/R9/R10/R11/R13/B1）完整（同一份 `workflow-gate-lib.mjs`，`gate-selftest` / `gate-scenarios` 全量回归通过）。
+> `project-manager` / `requirements-analyst` 不在 R13 门禁表（恒放行），仍建议调用 `role` 子命令以确认流程状态。
 
-## 1. 强制调用清单（手动自检兜底）
+**退出码行为（强制）**：`0` 放行，继续原操作；`1`（`deny`）**立即停止**原操作，**不得改用其他工具绕过**（如 Write 被拒后改用 Shell 写文件），向用户展示 `permissionDecisionReason` / `additionalContext` 并说明须先完成的前置步骤；`2`（`decision:"block"`，仅 `stop`）不得收尾，按 `reason` 指引分派对应角色后再调 `stop` 复检。
 
-顶层代理在下列操作**前**，**必须**先运行对应 gate-check 子命令，读取其 stdout JSON 与退出码（即使原生 Hook 已可能拦截，仍须手动自检以确保兜底）：
+## 1. 按需细则指针
 
-| 操作前 | gate-check 子命令 | `permissionDecision:"allow"` -> 放行 | `permissionDecision:"deny"` -> | `decision:"block"` -> |
-| ------ | ------------------ | -------------------- | -------------- | --------------------------- |
-| 写入 / 编辑 / 删除任意文件（Write / Edit） | `node .trae/scripts/gate-check.mjs dev-write <filepath>` | 可执行写入 | **禁止写入**，须停止并向用户报告 `permissionDecisionReason` / `additionalContext` | - |
-| 执行 Shell 命令（尤其项目初始化 / 依赖安装 / 包管理） | `node .trae/scripts/gate-check.mjs dev-shell "<command>"` | 可执行 Shell | 禁止执行，须先完成 PM 分派 | — |
-| 执行系统级工具链安装（winget / brew / apt / choco 等） | `node .trae/scripts/gate-check.mjs toolchain "<command>"` | 可执行（须用户已确认并存在有效 `.toolchain-install-approved.json`） | 禁止，须先走 `development-engineer`「检测 → 询问 → 确认 → 安装」流程 | — |
-| 发起角色 Agent 分派（`system-architect` / `requirement-reviewer` / `development-engineer` / `quality-engineer` / `test-engineer`） | `node .trae/scripts/gate-check.mjs role <role-name>` | 可分派 | 禁止分派，须先补齐前置成果物或解除阻塞 | — |
-| 拟结束当前回合（stop / 向用户交付总结） | `node .trae/scripts/gate-check.mjs stop` | 可收尾 | — | **须继续推进**：按 `reason` 分派对应角色后再次调用 |
+本规则为薄宪章常驻条目，下列细则按需 Read，不在每轮重复展开（避免与说明权威重复维护、膨胀常驻上下文）：
 
-> `project-manager` / `requirements-analyst` 不在 R13 门禁表（恒放行），但仍建议调用 `role` 子命令以确认流程状态。
-
-## 2. 退出码语义
-
-| 退出码 | 含义 | 顶层代理动作 |
-| ------ | ---- | ------------ |
-| `0` | 放行 / 可收尾 | 继续执行原操作 |
-| `1` | 拒绝（`deny`） | **立即停止**原操作；不得改用其他工具绕过（如 Write 被拒后改用 Shell 写文件）；向用户展示 `additionalContext` 并说明须先完成的前置步骤 |
-| `2` | 须继续推进（`decision:"block"`，仅 `stop` 子命令） | 不得收尾；按 `reason` 指引分派对应角色，完成后再调 `stop` 复检 |
-
-## 3. gate-check 子命令与内部脚本映射
-
-| gate-check 子命令 | 内部调用脚本 | 检查内容 |
-| ----------------- | ------------ | -------- |
-| `dev-write` | `gate-dev-workflow.mjs` | 传入 `{tool_input:{path}}`，检查 R3/R6/R9/R10 |
-| `dev-shell` | `gate-dev-shell.mjs` | 传入 `{tool_input:{command}}`，检查受控 Shell 模式 + dev gate |
-| `toolchain` | `gate-toolchain-install.mjs` | 传入 `{tool_input:{command}}`，检查工具链安装批准标记 |
-| `role` | `gate-role-sequence.mjs` | 传入 `{tool_input:{subagent_type}}`，检查 R13 成果物门禁链 |
-| `stop` | `gate-stop-workflow.mjs` | 无载荷，检查流程是否闭环 |
-
-## 4. 强制自检义务（§4.15 在 Trae 下的体现）
-
-除上述「调用前门禁」外，顶层代理在每个回合结束前须完成 `AGENTS.md` §4.15 自检表（本回合是否越权代写、是否修改受门禁源码、开发线是否待 QE、批次/最终 E2E 是否 `gatePassed` 等）。`gate-check.mjs stop` 是自检表的机械兜底，但不替代文字自检——**调用者身份判定**（顶层代理 vs 子 agent 越权）无法机械化，仍由 §4 R5/R8 文字约束承担。
-
-## 5. fail-open 边界
-
-见 `AGENTS.md` §8.4。
-
-## 6. 与角色定义文件的协同
-
-各角色定义文件（`.trae/agents/*.md`）为 Trae 原生 Subagent，由内置 "Agent" 按 `description` 字段匹配调用，拥有独立上下文窗口（见 `AGENTS.md` §1）。各角色 Subagent 的系统提示词已收纳本规则全文引用（「门禁前置：见 `.trae/rules/gate-protocol.md`」），由 Subagent 文件本身承载，**无需顶层代理在调用 `prompt` 中再行注入**。顶层代理按 `AGENTS.md` §4 流程编排协议发起 Subagent 调用，仅传递任务上下文（用户目标、`process.md` 路径、已有成果物路径、PM 分派计划），不得越权代行角色职责。
+- **子命令完整动作表与退出码语义**：见 `.trae/harness/spec/trae-adaptation.md` §0.3（每个子命令的放行 / 拒绝动作、前置条件与退出码 0/1/2 的对应）。
+- **Hook matcher → 脚本映射**：见 `.trae/harness/spec/trae-adaptation.md` §0.4（`Write|Edit|...` / `Bash|RunCommand` / `Task` / `*` / `Stop` / `SessionStart` 各对应哪个 `gate-*.mjs` 与用途）。
+- **回合结束前自检表**：见 `AGENTS.md` §5.15（本回合是否越权代写、是否修改受门禁源码、开发线是否待 QE、批次 / 最终 E2E / lint(R15) / 静态扫描(R16) / 启动冒烟(R32) 是否 `gatePassed`、R31 / R34 / R35 / R37 / R38 / R40 等自检项）。`gate-check.mjs stop` 是自检表的机械兜底，**不替代文字自检**——**调用者身份判定**（顶层代理 vs 子 agent 越权）无法机械化，仍由 `AGENTS.md` §5 的 R5 / R8 文字约束承担。
+- **fail-open 边界与机械层实际强度**：见 `.trae/harness/spec/mechanical-gates.md` §8.7（Hook 只提高抄近路成本、非不可逾越沙箱；哪些判据 fail-open、哪些不可伪造）。门禁路径分级与 R28 / R29 判据见同文件 §8.5。
+- **角色 Subagent 加载与协同**：见 `AGENTS.md` §1（7 角色由内置 "Agent" 按 `description` 匹配调用，拥有独立上下文窗口）。各角色 Subagent 系统提示词已收纳本规则引用（「门禁前置：见 `.trae/rules/gate-protocol.md`」），由 Subagent 文件本身承载，**顶层代理调用 Task 时无需在 `prompt` 中再注入**，仅传递任务上下文（用户目标、`process.md` 路径、已有成果物路径、PM 分派计划），不得越权代行角色职责。

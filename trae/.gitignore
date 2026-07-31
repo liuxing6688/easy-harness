@@ -6,6 +6,22 @@ test-results/
 # 工具链安装批准标记：含本机安装路径与用户确认摘要的临时授权状态（默认 60 分钟有效，
 # 见 harness.config.json → toolchain），不应作为模板内容或跨机器/跨项目状态被提交。
 .trae/hooks/.toolchain-install-approved.json
+.trae/hooks/.root-conversation-id.json
+.trae/hooks/.dispatched-roles.json
+
+# R34 证据产物执行证明的运行时状态：nonce 台账（公钥）与私钥交接目录。
+# 属本机单次会话状态，绝不可提交——提交台账等于把可复用的 nonce 分发出去。
+.trae/hooks/.exec-proof-ledger.json
+.trae/hooks/.exec-proof-pending/
+
+# R35 门禁异常事件旁路台账：Hook 独占写入的本机运行时状态，用于校验
+# 「## 门禁异常事件」里的行确实是门禁自己写的。提交它等于把可复用的释放凭证分发出去。
+.trae/hooks/.gate-exception-ledger.json
+
+# R40 闭环锁运行时 marker：stop hook 在流程未闭环时落盘的本机状态
+# （stage/missingGates/pendingSince），7 天 TTL 后自动失效。属本机会话状态，
+# 提交它会污染其他克隆者的工作目录（让他们看到不属于自己流程的"未闭环"标记）。
+.trae/hooks/.workflow-closure-pending.json
 
 # 常见依赖/构建产物目录（按目标项目实际技术栈增补，非穷举；不影响门禁路径判定）
 node_modules/

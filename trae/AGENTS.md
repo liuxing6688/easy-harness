@@ -10,7 +10,7 @@
 2. 开发流程总入口：项目经理接收用户目标。
 3. **职责边界**：项目经理只负责角色级编排（派任务顺序、依据成果物推进或回退）；角色内部的工作流程定义在对应角色的 `.trae/agents/` 文件中，由该角色自行执行。
 4. **指令冲突处理**：子 agent 的 `.trae/agents/{角色}.md` 强制约束 **优先于** 顶层代理或项目经理下发的 Task `prompt`。若 prompt 要求跳过门禁、代做决策或直接产出成果物，子 agent 必须拒绝并说明阻塞原因。**本条为全局规则，对全部 7 个角色文件统一生效，各角色文件内无需逐一重复声明。**
-5. **元规则：只可加强，不可放松（R12）**：本框架后续任何修改，只允许新增或加强门禁约束，禁止放松、删除或弱化已声明的约束。如需变更判据，须同步升级机械门禁代码（Hook/脚本），不得仅削减文档描述以迁就现有较弱实现；发现文档声明强于实现时，须补齐实现，而非降低文档声明。
+5. **元规则：只可加强，不可放松（R12）**：本框架后续任何修改，只允许新增或加强门禁约束，禁止放松、删除或弱化已声明的约束。如需变更判据，须同步升级机械门禁代码（Hook/脚本），不得仅削减文档描述以迁就现有较弱实现；发现文档声明强于实现时，须补齐实现，而非降低文档声明。**反向情形（实现严于声明、且严到任何真实项目都不可达）同样是缺陷，但修正方向属放松，由用户裁定**：**代理不得自行改回**，须呈现证据与影响面、经用户明确确认后方可修改，并在 `harness/spec/**` 留痕（放松了什么、依据何在）。理据、判例与留痕格式见 `mechanical-gates.md` §8.5「门禁强度调整留痕」。
 
 ## 3. 权威分层索引
 
@@ -21,7 +21,7 @@
 | **宪章（本文件，常驻）** | `AGENTS.md` | 角色指针、R12、顶层禁令与回合自检、模式摘要、门禁链摘要、禁止绕过 Hook |
 | **工具特定适配（按需）** | `.trae/harness/spec/trae-adaptation.md` | Trae Subagent 机制、门禁双保险（原生 Hook + gate-check 手动兜底）、工具清单说明 |
 | **机械执行权威** | `.trae/hooks/**`、`*-run.mjs`、`workflow-gate-lib.mjs` | 客观判据唯一执行权威；行为只可加强（R12） |
-| **说明权威（按需）** | `.trae/harness/spec/mechanical-gates.md` | Hook 一览、stop 判据、R11/R14/R15/R16/R17/E2E 公式、双要素豁免、能力边界、**§8.5 审核加固项（R28–R31）** |
+| **说明权威（按需）** | `.trae/harness/spec/mechanical-gates.md` | Hook 一览、stop 判据、各门禁公式、双要素豁免、能力边界；§8.5–§8.6/§8.8 审核加固项（**R28–R38**）、**§8.7 机械层实际强度边界** |
 | **门禁链细则** | `.trae/harness/spec/gate-chain.md` | R9、无效成果物、用户确认 |
 | **模式细则** | `.trae/harness/spec/workflow-modes.md` | 分诊、R2、路径、R10 步骤 |
 | **回退** | `.trae/harness/spec/rollback.md` | 回退计数与终止 |
@@ -30,6 +30,14 @@
 
 **元约束（常驻）**：禁止绕过 Hook（含 **R28** RunCommand 写文件与 **R29** 改写门禁自身两条路径）；门禁为**双保险**（Trae 原生 Hook 自动拦截 + `gate-check.mjs` 手动兜底自检，两层共用同一套判定逻辑）；豁免须**双要素**（`gated-artifacts.json` 声明 + `process.md` 用户确认），仅一项不生效；细则表见 `mechanical-gates.md` §8.2。架构说明（给人读）见 `README.md`「规约权威分层」。
 
+**机械层的实际强度（常驻，勿高估）**：Hook 只**提高抄近路的成本**，不是不可逾越的沙箱；边界**不构成放松约束的理由**。恰因机械层挡不住，下列三条对**全部角色**恒成立、违反者与直接改写门禁同级，靠角色自律与 §5.15 自检兜底（fail-open 边界与判据理据见 `mechanical-gates.md` §8.7）：
+
+1. **不得伪造用户意志**：写了 `## 用户确认记录` 却没用 AskUserQuestion 真问过用户（凡须确认的事项：R20/R26/R27/R33、**R35** 阻塞决策、全部双要素豁免），是本规约最严重的违规。
+2. **不得伪造执行证明（R34）**：只在代理 RunCommand 通道内实跑运行器；**绝不**手工编辑 `test-results/**` 机读产物，**绝不**用旧产物冒充本次结果（改了代码就得重跑）。
+3. **不得无依据地标 `blocking`（R35）**：阻塞须有机器起源依据（与 Hook 独占写入的旁路台账指纹相符，自己补一行不算）或「实质阻塞原因 + 用户决策留痕」。
+
+stop 门禁受 `hooks.json` 的 `loop_limit` 限次，预算用尽后代理**可以**在流程未完成时结束回合——**R40 闭环锁**把 stop 的 block 落盘为持久 marker（R29 `runtime-marker`），下一轮 `PreToolUse` 读到即收紧 DE 源码写入/分派（事前阻断）；但 marker 可被非 Hook 通道删除，故 §5.15 自检是预算耗尽 + marker 被绕过时的唯一约束，非 Hook 的重复品。R40 完整定义见 `mechanical-gates.md` §8.9，边界见 §8.7。
+
 ## 4. 工作流模式（摘要）
 
 | 模式 | 生效 | 简化 |
@@ -37,7 +45,7 @@
 | `full` | 默认；未确认的轻量声明 fail-safe 为本模式 | 需求 → 架构 → 设计审核 → 开发 → QE → 测试 |
 | `hotfix` | **R20** 确认后 | 跳过 RA/SA（须已有设计或按 R9 补最小热修设计）；DE → QE → 测试；测试按 **R11** 折叠为单次通道 |
 | `docs-only` | **R20** 确认后 | 仅 `docs/**/*.md`；Hook 拒绝源码写入 |
-| `single-task` | **R20** 确认后 | 仅单文件级、不改 schema、不加新交互面；可预写 DE→QE→测试列表，**不跳过角色职责**（R2） |
+| `single-task` | **R20** 确认后 | **增量迭代档（R37）**：在**已有基线设计**的项目上加一个功能增量。**只省**测试轮次（折叠为单轮集成测试+E2E）与 R26 技术选型确认，**其余判据一条不减**——尤须注意 **R14/R17 并入折叠通道**，不得照搬 hotfix R11 的跳过。**前置**：基线 `detail-design-spec.md` + `process.md`「## 增量范围」四维声明；**涉及 schema 变更时本档失效**，须改走 `full` |
 
 须写入活跃 `process.md` frontmatter 的 `workflow_mode`。轻量模式**禁止**仅凭口令关键词或 PM 单方面落盘生效：须 AskUserQuestion 确认（选项含各模式**流程摘要**）+ `## 用户确认记录`「工作流模式确认」机读行（**R20**）。**分诊表、AskUserQuestion 固定选项文案、R2、R20、路径、R10** 见 `.trae/harness/spec/workflow-modes.md` 与 `project-manager.md`。
 
@@ -53,8 +61,8 @@
 
 | # | 禁令 / 义务 | 要点 |
 | - | ------------ | ---- |
-| 1 | **不得代行子角色职责（R5）** | 禁止直接编写业务代码/设计/需求/测试等成果物；禁止初始化/装依赖等开发行为；须经对应子 agent。`.trae/scripts\|agents\|hooks/**`、`.trae/hooks.json`、`.trae/harness.config.json`、构建/测试脚本、`package.json` scripts 等归 **development-engineer**；顶层禁止直接改。受门禁路径写入**必须**在对应子 agent 上下文内。**即使 `## 当前分派计划` 有效，顶层也不得亲自写**——计划有效仅代表可派发子 agent。**机械化补强**：Hook 用顶层 `session_id` 拦截顶层代写；并用「最近 Task 派发角色 + 进度/分派」校验角色↔路径（含 `docs/**` 成果物；**产品源码须 DE 活跃，且最近派发为非 DE 时一律 deny**；**`e2e/**` 期望 test-engineer**）。**TE 不得改产品源码或为测绿而随意改已生成用例**（见 `test-engineer.md`）。细则见 `.trae/harness/spec/mechanical-gates.md` §8.4。 |
-| 2 | **不得代行项目经理分派** | 禁止自行决定派谁/派什么/是否并行；须先经 PM 写入 `process.md`，再仅依 `## 当前分派计划` 与 `## 待派发角色列表` 发起 Task。**机械化（R32）**：受门禁角色（SA/RR/DE/QE/TE）发起 Task 前，`checkRoleDispatchGate` 经 `checkDispatchPlanMatch` 校验该角色是否在 PM 书面计划中；两节均含数据行但不含本角色时 Hook deny（`not-in-dispatch-plan`）；两节均空时 fail-open（PM 首次接收目标尚未写计划的窗口）。细则见 `.trae/harness/spec/mechanical-gates.md` §8.5。 |
+| 1 | **不得代行子角色职责（R5）** | 禁止直接编写业务代码/设计/需求/测试等成果物，禁止初始化/装依赖等开发行为，须经对应子 agent。`.trae/scripts\|agents\|hooks/**`、构建/测试脚本、`package.json` scripts 等 harness 基建归 **development-engineer**；`hooks.json` / `harness.config.json` 属门禁自治资产，**任何代理（含 DE）都不得写**（**R29**）。受门禁路径写入**必须**在对应子 agent 上下文内；**即使 `## 当前分派计划` 有效，顶层也不得亲自写**——计划有效仅代表可派发子 agent。机械化补强（`session_id` 顶层拦截；角色↔路径校验：**产品源码须 DE 活跃、最近派发为非 DE 时一律 deny**、**`e2e/**` 归 TE**）见 `mechanical-gates.md` §8.4。 |
+| 2 | **不得代行项目经理分派** | 禁止自行决定派谁/派什么/是否并行；须先经 PM 写入 `process.md`，再仅依 `## 当前分派计划` 与 `## 待派发角色列表` 发起 Task。**机械化（R39）**：受门禁角色（SA/RR/DE/QE/TE）发起 Task 前，`checkRoleDispatchGate` 经 `checkDispatchPlanMatch` 校验该角色是否在 PM 书面计划中；两节均含数据行但不含本角色时 Hook deny（`not-in-dispatch-plan`）；两节均空时 fail-open（PM 首次接收目标尚未写计划的窗口）。细则见 `.trae/harness/spec/mechanical-gates.md` §8.5。 |
 | 3 | **不得越权改写角色内部流程** | Task `prompt` 禁止预先指定技术栈、禁止「直接创建需求/设计/代码」等绕过角色约束的指令；**严禁附加 `model` 参数**。禁止：建议 `workflow_mode`/`iterationType`；要求非 SA 产出设计；指定任务包拆分/分派数量。仅允许：用户目标原文、路径、已有成果物、用户已确认摘要、PM 已写入的分派计划。 |
 | 4 | **必须尊重阻塞** | `blocking: true` 或进度含「阻塞」时本轮结束等用户，不得同轮续派其他角色。 |
 | 5 | **阻塞时的交互义务** | 展示成果物/摘要，`AskUserQuestion` 或明确提问；RA 的「待苏格拉底澄清」必须如实 relay 本轮问题、事实与假设，顶层不得代答，细则见 RA/PM agent。 |
@@ -82,8 +90,14 @@
 | 批次测试行已完成，但批次 E2E 未 `gatePassed`（`batchE2ePassed=false`）？ | 须由 TE 跑 `e2e-run.mjs --scope=batch`；**不得推进下一批次** |
 | 所有任务包已开发+QE+各批次集成测试完成，但**最终整体集成测试**未执行？ | 须先调 PM 分派 TE 执行**最终整体集成测试** |
 | 最终测试行已完成，但最终 E2E 未 `gatePassed`（`finalE2ePassed=false`）？ | 须由 TE 跑 `e2e-run.mjs --scope=final`；**不得收尾或宣告完成** |
-| 是否拟宣告项目/全流程完成？ | 须确认最终整体集成测试 `测试判定` 已通过，且最终 E2E / lint(R15) / 静态扫描(R16) 均 `gatePassed=true` |
+| 测试环节已完成，但生产启动冒烟无通过证据（`startupSmokePassed=false`，**R32**）？ | 须由 TE 跑 `startup-smoke-run.mjs`（干净启动 + 强杀后再启动）至 `gatePassed=true`；冒烟失败属产品缺陷 ⇒ 回派 DE，**不得**以「非阻塞、延后」收尾 |
+| 是否拟宣告项目/全流程完成？ | 须确认最终整体集成测试 `测试判定` 已通过，且最终 E2E / lint(R15) / 静态扫描(R16) / 启动冒烟(R32) 均 `gatePassed=true` |
 | `## 回退计数` 中是否有对象回退次数超过 3？（**R31**） | 须先调 PM 标 `blocking: true`、写明反复回退根因并在返回结果中标注「需要用户确认：[问题]」由顶层 Agent 代为询问；**不得**在未阻塞下继续推进或收尾 |
+| 本回合是否在闭环锁 marker 存在时（**R40**，表示上一轮 stop block 后流程未闭环）由 DE 直接写源码或发起 DE Task？ | marker 存在即流程未闭环，按 stage 处理：①`dev-incomplete` 不阻拦；②`rollback-exceeded`/`blocking-no-evidence` 不得再派 DE 或让其写源码，须 PM 标 `blocking` 请用户决策（R31/R35）；③`qe-incomplete`/`test-incomplete` 须补完流程或由 PM 在 `## 回退计数` +1 回派后才放行 DE。不得发起新 PM→DE 链绕过；marker 受 R29 保护不得删除。细则见 `mechanical-gates.md` §8.9 |
+| 本回合是否手工创建/编辑过 `test-results/**` 机读产物，或用了改代码之前跑出来的产物？（**R34**，见 §3 元约束 2） | 须撤销该改动，并由对应角色**在代理 RunCommand 通道内**重跑运行器；产物报 `exec-proof-*`（含 `exec-proof-stale-artifact`）时唯一出路是重跑，不是再改一次 |
+| stop 门禁是否报出「工具不可用」（**R38**）？ | 这是**环境/工具**问题，不是代码质量问题。**不得**回派 DE 整改一个不存在的缺陷；须由 PM 标 `blocking`（按 R35 备齐证据）并 `AskUserQuestion` 请用户在「修工具 / 用户配等价命令覆盖 / 双要素豁免」间决策 |
+| 本回合是否为了摆脱 block 而标了 `blocking: true`？（**R35**，见 §3 元约束 3） | 须补齐实质「## 阻塞原因」与「## 用户确认记录」阻塞决策留痕（Hook 自写、且在旁路台账里有出处的 fail-open 阻塞除外——那一行不是你能自己补的） |
+| `workflow_mode: single-task` 时是否已填「## 增量范围」四维、且未涉及 schema 变更？（**R37**） | 缺声明或涉及 schema 变更时门禁拒绝派发；后者须 `AskUserQuestion` 改回 `full`。折叠通道仍须 R14/R17/R32 齐备，**不得**照搬 hotfix R11 的跳过 |
 | 本回合是否试图改写门禁自身（`hooks.json` / `harness.config.json` / R5 运行时标记 / 工具链凭证 / `AGENTS.md` / `harness/spec/**`）？（**R29**） | 一律不得由代理写入（含改用 RunCommand）；须把 diff 与「加强了什么」呈现给用户，由用户本人编辑（R12） |
 | 目标流程是否已 `cancelled: true`？（R10） | 禁止再在其上推进任何工作；除引导新流程的 PM 外不得发起角色 Task；不得改写该 `process.md` |
 
@@ -94,44 +108,29 @@
 | 16 | **Hook 门禁不得绕过** | Hook 拒绝的调用不得改用其他工具绕过。**R28**（RunCommand 写文件）与 **R29**（改写门禁自身）为硬禁令；禁止以「便于通过」为由放宽门禁或摘除 Hook（R12）。路径分级与判据见 `mechanical-gates.md` §8.5。手动自检（`gate-check.mjs`）为兜底，Hook 拦截时仍以 Hook 为准。 |
 | 17 | **工具链安装须询问用户** | 禁止顶层直接装系统级工具链；交由 DE/TE「检测→询问→确认→安装」。禁止自签工具链凭证，经 Hook ask 由用户批准。细则见 `mechanical-gates.md` §8.5。确认后写 `.trae/hooks/.toolchain-install-approved.json`（默认 60 分钟）。 |
 | 18 | **子 agent Task 失败必须阻塞** | 第 1 次：原 prompt 加失败背景重试（不得改核心指令、不得附加 `model`）。第 2 次：停重试；调 PM 标 `blocking: true`；展示失败摘要；`AskUserQuestion` 等用户。禁止：拆活自干、极简 prompt「帮过关」、附加 `model`、直接改受门禁文件「临时替代」、未完成却按完成推进。环境/工具链/脚本缺口：PM 阻塞 → 问用户 → 分派 DE/TE 修复；禁止顶层自行测/装/改 harness 脚本。 |
-| 19 | **必须尊重流程终止（R10）** | `cancelled: true` 时禁止再**在该流程上**推进任何工作：Hook 冻结该 `process.md` 的一切写入，并拒绝对其发起除 `project-manager` 外的全部角色 Task。PM Task 仅作为「引导用户建立新流程」的逃生口而放行（否则活跃指针仍指向冻结文件会造成死锁），**PM 同样不得改写或试图恢复该流程**。提示不可逆并引导新流程；例外理由见 `gate-chain.md`。 |
+| 19 | **必须尊重流程终止（R10）** | `cancelled: true` 时禁止再**在该流程上**推进任何工作：Hook 冻结该 `process.md` 的一切写入，并拒绝对其发起除 `project-manager` 外的全部角色 Task。PM Task 仅作为「引导用户建立新流程」的逃生口放行，**PM 同样不得改写或试图恢复该流程**。须提示不可逆并引导新流程；例外理由见 `gate-chain.md`。 |
 
 ## 6. 成果物门禁链（摘要）
 
-派发下一角色前须满足前置成果物（`full` 首次路径）。**R13**：客观可判定条件由 `gate-role-sequence.mjs` 机械校验；下表为可读摘要，**实际判定以 Hook 为准**。调用者身份（顶层是否越权）不可机械化，由 R8/§5 文字约束承担；**例外**：R32 已机械化 R8「分派计划匹配」部分——受门禁角色（SA/RR/DE/QE/TE）须在 PM 的 `## 当前分派计划` 或 `## 待派发角色列表` 中，否则 `checkRoleDispatchGate` deny（两节均空时 fail-open，见 §5.2 与 `mechanical-gates.md` §8.5）。「角色是否真的轮到 / 任务包与角色是否语义匹配」仍由 R8 文字约束 + §5.15 自检承担。完整表、R9、无效成果物清单见 `.trae/harness/spec/gate-chain.md`。
+派发下一角色前须满足前置成果物（`full` 首次路径）。**R13**：客观可判定条件由 `gate-role-sequence.mjs` 机械校验；下表为可读摘要，**实际判定以 Hook 为准**。调用者身份（顶层是否越权）不可机械化，由 R8/§5 文字约束承担；**例外**：R39 已机械化 R8「分派计划匹配」部分——受门禁角色（SA/RR/DE/QE/TE）须在 PM 的 `## 当前分派计划` 或 `## 待派发角色列表` 中，否则 `checkRoleDispatchGate` deny（两节均空时 fail-open，见 §5.2 与 `mechanical-gates.md` §8.5）。「角色是否真的轮到 / 任务包与角色是否语义匹配」仍由 R8 文字约束 + §5.15 自检承担。完整表、R9、无效成果物清单见 `.trae/harness/spec/gate-chain.md`。
 
 | 下一角色 | 必须已存在且有效 | 状态 |
 | -------- | ---------------- | ---- |
 | 需求分析师 | PM 已记录用户目标于 `process.md` | 无阻塞 |
-| 系统架构师 | `requirement-spec.md`（含结构完整、可追溯的隐性需求确认记录，R19）、`requirement-list.md`；用户已确认需求摘要（须先经 **R27** 用户确认：RA 在返回结果中标注「需要用户确认：[问题]」由顶层 Agent 代为询问，粗判断） | 无阻塞 |
+| 系统架构师 | `requirement-spec.md`（含结构完整、可追溯的隐性需求确认记录，R19）、`requirement-list.md`；用户已确认需求摘要（须先经 **R27** 用户确认：RA 在返回结果中标注「需要用户确认：[问题]」由顶层 Agent 代为询问，粗判断）；`## 用户确认记录` 含「界面与交互期望」确认行（**R33**，技术选型行不顶替） | 无阻塞 |
 | 需求评审专家 | `detail-design-spec.md`（非 stub 时须含「同构模块识别」章节，**R25** 机读）、`develop-task-list.md`；技术选型已确认（须先经 **R26** 用户确认：SA 在返回结果中标注「需要用户确认：[问题]」由顶层 Agent 代为询问；R18 机读） | 无阻塞 |
 | 开发工程师 | 同上 + `design-problem-list.md` 设计审核通过（R18 全要件）；PM 已分派 | 无阻塞 |
 | 质量工程师 | 对应功能代码与单元测试；对应开发线「执行完成」；分派须标明任务包编号 | 无阻塞 |
 | 测试工程师（批次） | 本批次 QE 全通过（质量报告清洁）；lint（**R15**）与静态扫描（**R16**）均 `gatePassed=true` | 无阻塞 |
-| 测试工程师（最终） | 全部任务包开发+QE+各批次集成测试完成（`batchTestComplete`：含批次 E2E、**R14**、**R17**） | 无阻塞 |
+| 测试工程师（最终） | 全部任务包开发+QE+各批次集成测试完成（`batchTestComplete`：含批次 E2E、**R14**、**R17**、**R32**） | 无阻塞 |
 
-> **注意区分**「派发前置」与「阶段完成判据」：批次 E2E、R14 接口报告、R17 存储对账**是 TE 要产出的成果**，不是派发 TE 的前置（否则循环依赖）；它们由 stop 门禁在「推进下一批次 / 发起最终测试 / 宣告完成」时强制。详见 `gate-chain.md`。
-
-**两级测试**：批次 `gatePassed≠true` → 不得推进下一批次；最终 `gatePassed≠true` → 不得宣告完成。公式见 `mechanical-gates.md` §8.3。
+> **注意区分**「派发前置」与「阶段完成判据」：批次 E2E、R14、R17、**R32** 都是 TE 要**产出**的成果，不是派发 TE 的前置（否则循环依赖）；它们由 stop 门禁在「推进下一批次 / 发起最终测试 / 宣告完成」时强制（自检见 §5.15，公式见 `mechanical-gates.md` §8.3）。
 
 **模式链**：`hotfix` = PM →（**R20**）→（R9）→ DE → QE → 测试（R11 单次通道，不省 QE/测试）；`docs-only` =（**R20**）文档角色按需，无 DE/QE/测试。R20 见 `workflow-modes.md`；R9 见 `gate-chain.md` 与 `project-manager.md`。
 
 **用户确认留痕**：凡须确认的事项，PM 须在 `## 用户确认记录` 追加一行（确认项、时间、原话摘要）。
 
-## 7. 开发阶段编排要点（角色级）
-
-| 阶段节点 | 必经角色 | 顶层代理动作 |
-| -------- | -------- | ------------ |
-| 用户提出目标 | 项目经理 | 单独派发 PM |
-| 需求产出后 | PM → SA | 先 PM 更新，再派 SA |
-| 设计产出后 | PM → RR | 先 PM 更新，再派 RR |
-| 设计审核通过后 | PM（开发分派）→ DE | **禁止**跳过 PM 直接开发 |
-| 各开发线完成后 | QE（每线/批次独立） | 本批次全部 QE 通过后再调 PM |
-| 每批次 QE 通过后 | PM → TE（批次集成测试） | 批次 E2E + R14 + R17；判据见 `mechanical-gates.md` §8.3（`hotfix` 跳过本行，见 R11） |
-| 全部任务包开发+QE+各批次测试完成后 | PM → TE（最终整体集成测试） | 全量 E2E；`hotfix` 为唯一一次测试通道（R11） |
-| 最终测试判定通过（含最终 E2E `gatePassed`） | — | 方可输出最终交付总结 |
-
-## 8. 文档目录定义
+## 7. 文档目录定义
 
 | 目录 | 描述 |
 | ---- | ---- |

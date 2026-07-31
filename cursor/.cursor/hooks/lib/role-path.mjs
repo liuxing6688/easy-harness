@@ -16,6 +16,7 @@ import { readRecentlyDispatchedRoles } from './identity.mjs';
 import { isProcessFilePath,
   isGatedDevPath,
   isE2eTestPath,
+  isGatedArtifactsConfigPath,
   isHarnessStatePath
 } from './paths.mjs';
 
@@ -95,6 +96,8 @@ export function isGatedRoleArtifactPath(filePath) {
   // **R29**：harness-state.json 决定所有门禁读哪一份 process.md（改写它即可把门禁指向
   // 一份伪造流程），归项目经理维护，纳入角色门禁而非放任豁免。
   if (isHarnessStatePath(p)) return true;
+  // **R29 加强**：项目级门禁配置由架构师维护，不再整体豁免（见 paths.isGatedArtifactsConfigPath）
+  if (isGatedArtifactsConfigPath(p)) return true;
   if (/(^|\/)docs\/(.+\/)?requirement\/.+\.(md|mdx|txt)$/.test(p)) return true;
   if (/(^|\/)docs\/(.+\/)?design\/.+\.(md|mdx|txt)$/.test(p)) return true;
   if (/(^|\/)docs\/(.+\/)?quality\/.+\.(md|mdx|txt)$/.test(p)) return true;
@@ -108,6 +111,8 @@ export function expectedRolesForPath(filePath) {
   if (!p) return null;
   if (isProcessFilePath(p)) return ['project-manager'];
   if (isHarnessStatePath(p)) return ['project-manager'];
+  // 门禁强度旋钮：仅架构师可声明（R29 加强）
+  if (isGatedArtifactsConfigPath(p)) return ['system-architect'];
   // docs 下角色成果物仅匹配文档扩展名；代码扩展名（如 docs/design/notes.py）走下方 isGatedDevPath → DE
   if (/(^|\/)docs\/(.+\/)?requirement\/.+\.(md|mdx|txt)$/.test(p)) return ['requirements-analyst'];
   if (/(^|\/)docs\/(.+\/)?design\/design-problem-list\.md$/.test(p)) {
