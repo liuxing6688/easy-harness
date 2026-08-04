@@ -48,6 +48,7 @@ import {
   checkHotfixP0InterfaceStorageMention,
   recordHotfixP0SoftReminder,
   recordFailOpenEvent,
+  getActiveProcessPath,
   hasResolvedDesignIssues,
   extractQeDispatchTaskPacks,
   getDevLineStatusForTaskPack,
@@ -137,7 +138,15 @@ import {
   closureLockBlocksDev,
   normalizePath,
 } from '../../../hooks/workflow-gate-lib.mjs';
-import { resolveLintCommand, computeLintGate } from '../../lint-run-lib.mjs';
+import {
+  resolveLintCommand,
+  computeLintGate,
+  detectStackFromFileNames,
+  buildLintRemediation,
+  isLintNotConfigured,
+  STACK_MANIFESTS,
+  STACK_LINT_COMMANDS,
+} from '../../lint-run-lib.mjs';
 import {
   resolveStartupCommand,
   computeStartupSmokeGate,
@@ -452,7 +461,7 @@ export {
   checkDesignProblemListStructure, checkRequirementCoverageMatrix, extractP0RequirementIds,
   checkDesignReviewClean, checkTechSelectionConfirmed, checkDesignReviewConclusion,
   checkHotfixP0Impact, checkHotfixP0InterfaceStorageMention, recordHotfixP0SoftReminder,
-  recordFailOpenEvent, hasResolvedDesignIssues, extractQeDispatchTaskPacks,
+  recordFailOpenEvent, getActiveProcessPath, hasResolvedDesignIssues, extractQeDispatchTaskPacks,
   getDevLineStatusForTaskPack, ROOT_CONVERSATION_STATE, DISPATCHED_ROLES_STATE,
   recordRootConversationId, writeRootSessionIdToEnvFile, readRootSessionIdFromEnv,
   checkLiteModeConfirmed, hasLiteModeConfirmation, getWorkflowMode,
@@ -461,7 +470,9 @@ export {
   checkRolePathPermission, collectActiveRoleSlugs, checkReconEvidenceRef,
   excerptInDesignAnchorWindow, extractDesignSectionWindow,
   checkIsomorphicModuleSection, checkIsomorphicModuleSectionReady, isGatedShellCommand,
-  resolveLintCommand, computeLintGate, resolveDupCommand, resolveSecurityCommand,
+  resolveLintCommand, computeLintGate, detectStackFromFileNames, buildLintRemediation,
+  isLintNotConfigured, STACK_MANIFESTS, STACK_LINT_COMMANDS,
+  resolveDupCommand, resolveSecurityCommand,
   computeSubGate, computeStaticScanGate,
   decodeTextBuffer, readTextFileSafe, readJsonFileSafe, parseProcessFrontmatter,
   classifyHarnessSelfGovernedPath, harnessSelfGovernedVerdict, isHarnessStatePath,

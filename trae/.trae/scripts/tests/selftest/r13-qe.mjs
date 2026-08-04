@@ -6,7 +6,7 @@
  */
 import {
   test, fixtureProcess, assert, fs, checkRoleDispatchGate, extractQeDispatchTaskPacks,
-  getDevLineStatusForTaskPack,
+  getDevLineStatusForTaskPack, getActiveProcessPath,
 } from './_harness.mjs';
 
 import {
@@ -71,7 +71,7 @@ test('R13 QE: 对应开发线执行完成且分派含任务包时允许发起 qu
   );
   const r = checkRoleDispatchGate('quality-engineer');
   assert.equal(r.ok, true);
-  assert.equal(getDevLineStatusForTaskPack(fs.readFileSync(process.env.HARNESS_PROCESS_PATH, 'utf8'), 'T0-1'), 'complete');
+  assert.equal(getDevLineStatusForTaskPack(fs.readFileSync(getActiveProcessPath(), 'utf8'), 'T0-1'), 'complete');
 });
 test('R13 QE: 多任务包时任一未完成即拒绝', () => {
   fixtureProcess(

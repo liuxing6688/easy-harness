@@ -77,18 +77,24 @@
 
 ### 编程规范 lint 命令（R15，文档留痕）
 
-> **机制说明**：QE 阶段运行 `node .cursor/scripts/lint-run.mjs` 时，命令由 **`harness.config.json` → `qe.commands.lint` 覆盖 > 构建清单自动探测 > 下表默认值** 解析（与 Hook 机械判据一致）。本节由系统架构师按已确认技术栈**填入一行**，供 QE/PM 查阅；**不必**为通过门禁而重复写入 config——多数栈留空 `qe.commands.lint` 即可。仅 monorepo、自定义脚本名、或多 manifest 时须在 config 覆盖并在下表同步改写。
+> **机制说明**：QE 阶段运行 `node .cursor/scripts/lint-run.mjs` 时，命令由 **`harness.config.json` → `qe.commands.lint` 覆盖 > 构建清单自动探测 > 下表默认值** 解析（与 Hook 机械判据一致）。本节由系统架构师按已确认技术栈**填入一行**，供 QE/PM 查阅；**不必**为通过门禁而重复写入 config——多数栈留空 `qe.commands.lint` 即可。
+>
+> **须写 config 覆盖时（monorepo、自定义脚本名、下表标「无框架默认」的栈）：架构师不得自行写 `harness.config.json`**——该文件受 **R29** 锁定，任何代理（含架构师）写入一律 deny。正确做法是在本节写明建议命令与理由，并提示项目经理请**用户本人**粘贴（片段可直接取自 `.lint-result.json` 的 `remediation.configSnippet`）。
 
-**各栈默认 lint 命令**（`lint-run-lib.mjs` → `STACK_LINT_COMMANDS`，与 `qe-run.mjs` 同口径）：
+**各栈默认 lint 命令**（`lint-run-lib.mjs` → `STACK_LINT_COMMANDS`，与 `qe-run.mjs` 共用同一张表）：
 
 | 技术栈（根目录 manifest） | 默认 lint 命令 |
 | ------------------------- | -------------- |
 | Node.js（`package.json`） | `npm run lint` |
-| Python（`pyproject.toml` / `requirements.txt`） | `ruff check .` |
+| Python（`pyproject.toml` / `requirements.txt` / `Pipfile` / `setup.py`） | `ruff check .` |
 | Go（`go.mod`） | `go vet ./...` |
 | Rust（`Cargo.toml`） | `cargo clippy` |
 | Ruby（`Gemfile`） | `rubocop` |
-| Java Maven / Gradle / PHP / .NET | **无框架默认** → 在 config 声明等价命令，或走 `lintApplicability: "n/a"` 双要素豁免 |
+| .NET（`*.sln` / `*.csproj`） | `dotnet build -warnaserror` |
+| Dart/Flutter（`pubspec.yaml`） | `dart analyze` |
+| Elixir（`mix.exs`） | `mix compile --warnings-as-errors` |
+| Swift（`Package.swift`） | `swiftlint`（未装时报 R38 工具不可用，不是代码违规） |
+| Java Maven / Gradle（含 `.kts`）/ PHP / CMake / Make | **无框架默认**（这些栈没有「未配插件也不会空转」的通用命令）→ 由用户本人在 config 声明等价命令，或走 `lintApplicability: "n/a"` 双要素豁免；候选命令见 `.lint-result.json` 的 `remediation.suggestedCommand` |
 
 **本项目（架构师填写）**：
 

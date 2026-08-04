@@ -1,0 +1,99 @@
+#!/usr/bin/env node
+/**
+ * Codex Bash PreToolUse 兼容内核：系统级工具链安装须经用户确认。
+ *
+ * 触发：由 `codex-hook-adapter.mjs shell` 与 gate-dev-shell 串行调用；
+ * 本 Hook 只关心 `harness.config.json` → `toolchain.installPatterns`
+ * （winget / brew / apt / mise / asdf / nix / VS Build Tools 等）。
+ *
+ * 放行条件（满足其一即可）：
+ *   1. 命令未命中安装模式 → 与本 Hook 无关，allow；
+ *   2. 存在有效 `.toolchain-install-approved.json` 凭证：
+ *      `userConfirmed: true` + 有效时间戳 + **commandHash 与本次命令匹配**（R29 加强，§8.5）；
+ *   3. 否则输出 legacy `ask`；Codex 适配器会在 Bash PreToolUse 上保守转为 deny，
+ *      因为该事件不提供可依赖的 ask 决策。用户确认后由用户重试命令。
+ *
+ * 重要（R29）：代理**不得**自签 `.toolchain-install-approved.json`
+ * （该路径属门禁自治资产，gate-dev-workflow / gate-dev-shell 会 deny）。
+ * 凭证仅可由用户本人创建，用于一段时间内的批量预授权。
+ *
+ * 共享判据：`./workflow-gate-lib.mjs`（`isToolchainInstallCommand` / `hasToolchainInstallApproval`）。
+ * 自锁防护（§8.4 / **R36**）：**lib 加载失败** fail-open；**判定期异常**默认 fail-closed，
+ * 但保留 legacy `ask`（由 Codex 适配器转为 deny，并给出用户重试指引）。
+ */
+/**
+ * 门禁自锁逃生：写 stderr、可选落盘、stdout 输出 allow 后退出。
+ * @param {string} context
+ * @param {unknown} err
+ * @param {object} [lib]
+ */
+function failOpenAllow(context, err, lib) {
+  process.stderr.write(`[gate-toolchain-install] fail-open (${context}): ${err?.message ?? err}\n`);
+  try {
+    lib?.recordFailOpenEvent?.('gate-toolchain-install', context, err);
+  } catch {
+    /* 落盘失败不影响 fail-open 放行 */
+  }
+  process.stdout.write(JSON.stringify({ permission: 'allow' }));
+  process.exit(0);
+}
+
+async function main() {
+  let lib;
+  try {
+    lib = await import('./workflow-gate-lib.mjs');
+  } catch (err) {
+    failOpenAllow('lib-load', err);
+    return;
+  }
+
+  const { allow, ask, isToolchainInstallCommand, hasToolchainInstallApproval, readStdinJsonAsync } = lib;
+
+  try {
+    const input = await readStdinJsonAsync();
+    const command = input.command ?? input.tool_input?.command ?? '';
+
+    // 非工具链安装命令：本 Hook 无事可做。
+    if (!isToolchainInstallCommand(command)) {
+      allow();
+    }
+
+    // 用户预授权凭证有效且 commandHash 匹配本次命令 → 放行。
+    if (hasToolchainInstallApproval(command)) {
+      allow();
+    }
+
+    // 未预授权：保留 legacy ask；Codex PreToolUse 适配层会将其转为 deny。
+    ask(
+      '工具链安装门禁：须先询问用户现有工具链路径或安装目标目录（避免未经确认的默认系统路径），在用户明确确认前不得自动安装。',
+      'AGENTS.md gate-toolchain-install：请先使用 AskQuestion 询问用户工具链的现有路径或安装目录，然后由用户本人批准或创建与本命令匹配的授权凭证，再重试本命令。Codex 的 Bash PreToolUse 不支持可靠 ask，适配器会保守拒绝本次调用。**不要**自行创建 `.codex/toolchain-install-approved.json`：该凭证已按 **R29** 禁止代理写入。',
+    );
+  } catch (err) {
+    // R36：判定期异常默认 fail-closed。本 Hook 的正常「未授权」出口就是 `ask`，
+    // 故异常时降级为 `ask` 而非 `deny`——既不静默放行，也不把一台缺工具链的机器锁死。
+    if (lib.getGateExceptionPolicy?.().failClosed) {
+      try {
+        lib.recordFailOpenEvent?.('gate-toolchain-install', 'runtime', err);
+      } catch {
+        /* 落盘失败不影响本次判定 */
+      }
+      process.stderr.write(
+        `[gate-toolchain-install] fail-closed→ask (runtime): ${err?.message ?? err}\n`,
+      );
+      process.stdout.write(
+        JSON.stringify(
+          lib.buildGateExceptionVerdict({
+            hook: 'gate-toolchain-install',
+            context: 'runtime',
+            err,
+            channel: 'toolchain',
+          }).output,
+        ),
+      );
+      process.exit(0);
+    }
+    failOpenAllow('runtime', err, lib);
+  }
+}
+
+main();

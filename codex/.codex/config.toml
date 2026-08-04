@@ -1,0 +1,16 @@
+# Project-local Codex defaults. Codex loads this file only after the repository is trusted.
+approval_policy = "on-request"
+sandbox_mode = "read-only"
+project_doc_max_bytes = 65536
+
+[sandbox_workspace_write]
+network_access = false
+
+[features]
+hooks = true
+multi_agent = true
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 8
+interrupt_message = true

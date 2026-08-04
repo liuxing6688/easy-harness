@@ -72,6 +72,9 @@ QE 阶段**必须实际运行 lint 且通过**，判据与 E2E 门禁同构（�
 5. **lint 失败**：须在质量报告「代码规范」行标记问题，严重等级**中**或以上；整改后须重跑 `lint-run.mjs` 直至 `gatePassed=true`
 6. **适用性豁免**（确无可用 linter）：遵循 `.cursor/harness/spec/mechanical-gates.md` §8.2「双要素豁免机制」表 R15 行，只声明一项不生效
 7. **工具不可用 ≠ lint 未通过（R38）**：若产物中 `toolUnavailable: true`（reason 为 `lint-tool-unavailable`），说明 linter 本身装不上/拉不到（`toolUnavailableCategory` 会标明 `command-not-found` / `dependency-fetch` / `network` / `proxy-or-tls`），**不是**代码有规范问题。此时**不得**在质量报告的「代码规范」行编造违规项，而应记录为「工具不可用」并回报项目经理按 R38 走「标 blocking + AskQuestion 请用户决策」路径（见 `mechanical-gates.md` §8.8 R38）。门禁**不会**因工具不可用而放行，但修的对象是环境而非代码。
+8. **另两类「不是代码违规」的失败，同样不得靠重跑或编造违规项收场**：
+   - `no-lint-command`：框架探测不到本项目的默认 lint 命令（未登记的技术栈、monorepo 根目录无清单、或该栈刻意无默认）。产物的 `remediation` 字段已给出探测到的栈、子项目清单与可粘贴的 config 片段。出路只有两条且**都要用户参与**：请**用户本人**写 `qe.commands.lint` 覆盖（`harness.config.json` 受 R29 锁定，你和架构师都不得代写），或走双要素豁免。你的动作是如实记录并回报 PM，不是反复重跑。
+   - `lint-not-configured`：命令跑起来了但项目没配 linter（如 `package.json` 缺 `scripts.lint`），一条规则都没检查过。这是**开发侧缺工程化配置**，须回报 PM 分派 development-engineer 补齐 linter 配置后重跑；不得记为代码违规，也不得走豁免绕过。
 
 ## 静态代码质量硬门禁（R16：重复代码 + 安全扫描）
 

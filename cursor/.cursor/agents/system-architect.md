@@ -77,10 +77,10 @@ model: claude-opus-5
 
 阶段 2 产出 `detail-design-spec.md` 时，须在 §5「本项目」表格中**按用户已确认技术栈填入一行 lint 命令**：
 
-1. **优先**从模板 §5 默认命令表（与 `lint-run.mjs` / `lint-run-lib.mjs` → `STACK_LINT_COMMANDS` 同口径）复制对应默认值（如 Node → `npm run lint`、Python → `ruff check .`）；
+1. **优先**从模板 §5 默认命令表（与 `lint-run.mjs` / `lint-run-lib.mjs` → `STACK_LINT_COMMANDS` 同口径）复制对应默认值（如 Node → `npm run lint`、Python → `ruff check .`、Dart → `dart analyze`）；
 2. **不必**为此修改 `harness.config.json`——`lint-run.mjs` 会按构建清单自动探测并选用同一默认；
-3. 仅当 monorepo、自定义 npm script 名、或多 manifest 导致自动探测不准时，在 `harness.config.json` → `qe.commands.lint` 写覆盖值，并在 §5 表格同步改写；
-4. 所选栈**无框架默认 lint**（Java/PHP/.NET 等）且无法声明等价命令时，走下方 `lintApplicability: "n/a"` 双要素豁免，并在 §5 说明豁免理由。
+3. 仅当 monorepo、自定义 npm script 名、或多 manifest 导致自动探测不准时才需要 config 覆盖。**但你不得自己写 `harness.config.json`**：它受 **R29** 锁定，任何代理（含你）经 Write 或 Shell 写入一律 deny——这不是可以「先斩后奏」的门槛，写入会被直接拒绝。正确做法是：在 §5 表格写明建议的覆盖命令与理由，并提示项目经理请**用户本人**粘贴到 `harness.config.json → qe.commands.lint`（现成片段见 `test-results/qe/.lint-result.json` 的 `remediation.configSnippet`）；
+4. 所选栈**无框架默认 lint**（Maven / Gradle / PHP / CMake / Make）时：先按第 3 条请用户配等价命令（候选见 `remediation.suggestedCommand`）；**确认本项目确实没有可用 linter** 时才走下方 `lintApplicability: "n/a"` 双要素豁免，并在 §5 说明豁免理由。**「框架没有默认命令」本身不是豁免理由**——那只说明框架不知道该跑什么，不等于本项目不适用 lint。
 
 #### §4 生产启动与异常恢复（R32，必填留痕）
 

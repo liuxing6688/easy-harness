@@ -127,7 +127,15 @@ import {
   checkSingleTaskPreconditions,
   INCREMENT_SCOPE_DIMENSIONS,
 } from '../../../hooks/workflow-gate-lib.mjs';
-import { resolveLintCommand, computeLintGate } from '../../lint-run-lib.mjs';
+import {
+  resolveLintCommand,
+  computeLintGate,
+  detectStackFromFileNames,
+  buildLintRemediation,
+  isLintNotConfigured,
+  STACK_MANIFESTS,
+  STACK_LINT_COMMANDS,
+} from '../../lint-run-lib.mjs';
 import {
   resolveStartupCommand,
   computeStartupSmokeGate,
@@ -393,7 +401,9 @@ export {
   checkRolePathPermission, collectActiveRoleSlugs,   checkReconEvidenceRef,
   excerptInDesignAnchorWindow, extractDesignSectionWindow,
   checkIsomorphicModuleSection, checkIsomorphicModuleSectionReady,
-  resolveLintCommand, computeLintGate, resolveDupCommand, resolveSecurityCommand,
+  resolveLintCommand, computeLintGate, detectStackFromFileNames, buildLintRemediation,
+  isLintNotConfigured, STACK_MANIFESTS, STACK_LINT_COMMANDS,
+  resolveDupCommand, resolveSecurityCommand,
   computeSubGate, computeStaticScanGate,
   decodeTextBuffer, readTextFileSafe, readJsonFileSafe, parseProcessFrontmatter,
   classifyHarnessSelfGovernedPath, harnessSelfGovernedVerdict, isHarnessStatePath,

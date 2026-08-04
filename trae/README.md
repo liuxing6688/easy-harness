@@ -258,8 +258,10 @@ Feature 迭代时，对应文件位于 `docs/{feature-名称}/design/gated-artif
 - **R5 运行时标记**（勿手工编辑；均已列入 `.gitignore`）：
   - `.trae/hooks/.root-conversation-id.json` — `gate-subagent-track` 首次落盘的顶层会话 id（兜底；主源为 `$TRAE_ENV_FILE` 中的 `ROOT_SESSION_ID`，会话级隔离）
   - `.trae/hooks/.dispatched-roles.json` — 最近 Task 派发角色，供写文件时角色↔路径校验
-- **QE 命令覆盖**：`.trae/harness.config.json` → `qe.commands`（可选）；未声明时 `qe-run.mjs` / `lint-run.mjs` 按项目根目录构建清单文件自动探测技术栈并选用默认 test/lint/audit 命令。当自动探测不准确（如 monorepo/workspace）时，在 `qe.commands` 中显式声明本项目的 test/lint/audit 命令予以覆盖
-- **编程规范 lint 门禁（R15）**与**静态代码质量门禁（R16：重复代码 + 安全静态扫描）**：执行命令、机读产物路径、命令解析优先级、`gatePassed` 判据与双要素豁免机制的**说明权威见 `.trae/harness/spec/mechanical-gates.md` §8.2**（执行权威：Hook/脚本；此处不复述以避免漂移）。速查：lint 产物 `test-results/qe/.lint-result.json`；静态扫描产物 `test-results/qe/.static-scan-result.json`；两者均为发起 test-engineer 与全流程收尾的前置条件。首次运行 `static-scan-run.mjs` 需联网经 `npx` 拉取 `jscpd-rs`/`gitleaks-secret-scanner`，建议固化为项目 devDependency 以避免重复下载；离线环境走 `qe.commands` 覆盖或豁免
+- **QE 命令覆盖**：`.trae/harness.config.json` → `qe.commands`（可选）
+  - 未声明时：`qe-run.mjs` / `lint-run.mjs` 按根目录构建清单自动探测，并共用 `lint-run-lib.mjs` 同一张探测表选默认 test/lint/audit 命令（覆盖面须 ⊇ `gatedPaths.buildManifests`；Node/Python/Go/Rust/Ruby/.NET/Dart/Elixir/Swift 有默认）
+  - 需要覆盖时：monorepo/workspace 探测不准，或所用栈刻意无默认 lint（Maven/Gradle/PHP/CMake/Make）——在 `qe.commands` 写明本项目命令。**该文件受 R29 锁定，须由你本人编辑**；AI 只能把 `test-results/qe/.lint-result.json` 里 `remediation.configSnippet` 呈现给你
+- **编程规范 lint 门禁（R15）**与**静态代码质量门禁（R16：重复代码 + 安全静态扫描）**：执行命令、机读产物、`gatePassed` 判据与双要素豁免的**说明权威见 `.trae/harness/spec/mechanical-gates.md` §8.2**（此处不复述以免漂移）。速查：lint 产物 `test-results/qe/.lint-result.json`；静态扫描产物 `test-results/qe/.static-scan-result.json`；两者均为发起 test-engineer 与全流程收尾的前置。lint 失败会按性质分流（真违规 / 工具不可用 R38 / 项目未配 linter / 探测无命令）——后两类不是「代码有问题」，解法见产物 `reason` 与 `remediation`。首次运行 `static-scan-run.mjs` 需联网经 `npx` 拉取工具，建议固化为 devDependency；离线环境走 `qe.commands` 覆盖或豁免
 - **活跃流程路径**：`.trae/harness-state.json` → `activeProcessPath`；可用环境变量 `HARNESS_PROCESS_PATH` 临时覆盖
 - **流程角色识别**：Hook 读取 `process.md` 时同时识别中文角色名和 agent slug（例如 `开发工程师` / `development-engineer`）
 

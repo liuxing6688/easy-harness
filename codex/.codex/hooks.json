@@ -1,0 +1,68 @@
+{
+  "description": "Codex lifecycle hooks for the Harness Engineering workflow.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(apply_patch|Edit|Write)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \".codex/hooks/codex-hook-adapter.mjs\" write",
+            "commandWindows": "node \".codex/hooks/codex-hook-adapter.mjs\" write",
+            "timeout": 60,
+            "statusMessage": "Checking workflow write gates"
+          }
+        ]
+      },
+      {
+        "matcher": "^(Agent|spawn_agent)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \".codex/hooks/codex-hook-adapter.mjs\" role",
+            "commandWindows": "node \".codex/hooks/codex-hook-adapter.mjs\" role",
+            "timeout": 60,
+            "statusMessage": "Checking role sequence gates"
+          }
+        ]
+      },
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \".codex/hooks/codex-hook-adapter.mjs\" shell",
+            "commandWindows": "node \".codex/hooks/codex-hook-adapter.mjs\" shell",
+            "timeout": 60,
+            "statusMessage": "Checking workflow command gates"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \".codex/hooks/codex-hook-adapter.mjs\" subagent",
+            "commandWindows": "node \".codex/hooks/codex-hook-adapter.mjs\" subagent",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \".codex/hooks/codex-hook-adapter.mjs\" stop",
+            "commandWindows": "node \".codex/hooks/codex-hook-adapter.mjs\" stop",
+            "timeout": 60,
+            "statusMessage": "Checking workflow completion gates"
+          }
+        ]
+      }
+    ]
+  }
+}

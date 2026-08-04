@@ -80,9 +80,11 @@ Hook 解析 `## 进度列表` 时同时识别中文角色名与 `.cursor/agents`
 >
 > **R15（编程规范 lint 硬门禁，唯一权威定义）**：`full`（含 `greenfield`/`feature`/`governance-overhaul`）、`single-task` 与 `hotfix` 迭代，QE 阶段须满足：
 > - 判据结构与 E2E 门禁同构（运行器写 `gatePassed` 机读产物 → lib 读入 → 门禁判定）；**执行命令与产物**：`node .cursor/scripts/lint-run.mjs` → `test-results/qe/.lint-result.json`。
-> - **命令解析优先级**：`harness.config.json → qe.commands.lint` 覆盖 > 构建清单自动探测 > 栈默认（Node/Python/Go/Rust/Ruby 等有默认；Java/PHP/.NET 等无默认）；多数项目不必手配 config，仅 monorepo/自定义脚本名/探测不准时覆盖。`detail-design-spec.md` §5 由架构师填入与默认一致的留痕，不作为 Hook 输入。
+> - **命令解析优先级**：`harness.config.json → qe.commands.lint` 覆盖 > 构建清单自动探测 > 栈默认（Node/Python/Go/Rust/Ruby/.NET/Dart/Elixir/Swift 有默认；Maven/Gradle/PHP/CMake/Make **刻意无默认**——这些栈没有「未配插件也不会空转」的通用命令，见下条）；多数项目不必手配 config，仅 monorepo/自定义脚本名/探测不准时覆盖。`detail-design-spec.md` §5 由架构师填入与默认一致的留痕，不作为 Hook 输入。
+> - **栈探测覆盖面（2026-08-03 跨栈覆盖修复，唯一权威）**：探测表 `lint-run-lib.mjs → STACK_MANIFESTS` **须覆盖** `harness.config.json → gatedPaths.buildManifests` 的全部条目（回归钉死于 `r15-lint.mjs`「栈探测清单须覆盖受门禁构建清单」）。历史实现只认 10 个根目录清单，而路径门禁早已纳管 `build.gradle.kts` / `CMakeLists.txt` / `mix.exs` / `pubspec.yaml`、R6 加强又让 `.swift` 等扩展名默认受门禁——这些项目**源码受门禁约束却永远拿不到 lint 命令**，R15 对它们是不可达红灯。两张表今后须同源演进：新增受门禁清单即在探测表登记，没有安全默认命令就登记空串，让门禁报「探测到 X 栈但无默认命令」而非含糊的 `unknown`。**探测只在项目根单层进行**：根目录无清单时递归（深度 ≤ 3）扫出子项目写进产物 `subProjects` 供用户判断，但**不推断命令**——替 monorepo 猜命令会在错误目录跑错误命令或跑出空转的「通过」。
 > - **判据**：`lintPassed = readLintResult()?.gatePassed===true`（须有 lint 命令且退出码为 0）；`docs-only` 视为满足。QE 记录完成但 `lintPassed=false` 时 `gate-stop-workflow` 注入 followup，且**不得发起 test-engineer**（判定函数见 `rule-index.md`）。
-> - **适用性豁免**：见上表 R15 行；无默认 lint 的栈须声明等价命令或走豁免，不得静默放过。
+> - **失败性质四分（`reason` 字段，均不放行、解法互不相同）**：`lint-failed`（真有违规 ⇒ DE/QE 整改）、`lint-tool-unavailable`（**R38** 环境缺工具 ⇒ PM 阻塞 + 用户决策）、`lint-not-configured`（命令存在但项目没配 linter，如 npm 缺 `scripts.lint` ⇒ 分派 DE 补配置，**不是**代码违规）、`no-lint-command`（探测不到默认命令 ⇒ 用户本人配覆盖或双要素豁免，重跑无用）。后两者由 `checkLintClean` 原样上浮到 `state.lintReason`，stop 门禁按性质分流文案——把「还没检查过」说成「有违规」会让 DE 去修不存在的缺陷（与 R38 同源教训）。`no-lint-command` 时产物另带 `remediation`（探测结果 + 候选命令 + 可粘贴的 config 片段）。
+> - **适用性豁免**：见上表 R15 行；无默认 lint 的栈须声明等价命令或走豁免，不得静默放过。**「框架没有默认命令」不构成豁免理由**——那只说明框架不知道该跑什么，不等于本项目不适用 lint；且配置覆盖须由**用户本人**编辑 `harness.config.json`（R29 锁定，架构师亦不得代写，只能呈现片段），代理不得以「改不了 config」为由改走豁免。
 >
 > **R16（静态代码质量硬门禁：重复代码 DRY + 安全静态扫描，唯一权威定义）**：`full`（含 `greenfield`/`feature`/`governance-overhaul`）、`single-task` 与 `hotfix` 迭代，QE 阶段须满足：
 > - 判据结构与 R15 同构，但**跨技术栈通用、不做 per-stack 探测**（本框架要求 `Node.js >= 18`，两项工具均经 `npx` 直接获取）；**执行命令与产物**：`node .cursor/scripts/static-scan-run.mjs` → `test-results/qe/.static-scan-result.json`（含 `duplication`/`security` 两个子结果）。
@@ -314,6 +316,35 @@ UTF-8 BOM、UTF-16LE/BE BOM，并按「0x00 字节的奇偶优势比」探测无
 测的是「解析器对夹具的行为」，而非「出厂模板能否通过出厂门禁」。
 `tests/selftest/templates-vs-gates.mjs` 补上这一层并登记「模板章节 ↔ 门禁判据」对照表；
 **今后新增任何「Hook 解析某章节」的规则，须同时在该表登记**，否则同类漂移会再次逃逸。
+
+#### 跨技术栈 lint 覆盖缺口修复（2026-08-03 规约审核）
+
+**问题定性**：R15 声称「跨技术栈」，实现却只认 10 个根目录构建清单，且四个栈的默认命令为空。
+与之相对，路径门禁（`gatedPaths.buildManifests` + R6 代码扩展名门禁）**早已**把 Kotlin DSL
+Gradle、CMake、Elixir、Flutter、Swift 等纳管。两层口径不一致的后果不是「少查一点」，而是
+**这些项目的源码受门禁约束、却拿不到任何 lint 命令**——R15 对它们是永久红灯，而唯一的出路
+（配 `qe.commands.lint` 覆盖）又被 R29 锁给了用户本人。实践后果只会是整体走豁免，等于门禁失效。
+
+| 缺陷 | 后果 | 修复 | 回归 |
+| ---- | ---- | ---- | ---- |
+| 探测表只有 10 个根目录清单，不含 `build.gradle.kts` / `CMakeLists.txt` / `mix.exs` / `pubspec.yaml` / `Package.swift` / `*.csproj` | 这些栈一律 `stack: unknown` ⇒ `no-lint-command` 永久红灯；Gradle 项目改用 Kotlin DSL 即静默掉出探测 | 探测表迁入 `lint-run-lib.mjs → STACK_MANIFESTS`（`lint-run.mjs` / `qe-run.mjs` 共用一张表，不再各抄一份），补齐上述清单并要求 ⊇ `gatedPaths.buildManifests` | `r15-lint.mjs`「栈探测清单须覆盖受门禁构建清单」（双向钉死，今后新增受门禁清单不登记即红） |
+| Maven / Gradle / PHP / .NET 默认命令为空，而 `harness.config.json` 受 **R29** deny | 唯一补救手段对**所有代理**关闭，流程必然停在 QE；`system-architect.md` §5 第 3 条却仍指示架构师去写该文件——**规约给出的处方，执行层会直接拒绝** | ①为工具链自带分析器的栈补默认（见下方留痕）；②Maven/Gradle/PHP/CMake/Make 仍留空但产出 `remediation`（候选命令 + 可粘贴片段）；③改写 `system-architect.md` §5、`detail-design-spec.md` §5 与 `quality-engineer.md` R15 节：架构师**呈现片段、请用户本人粘贴**，不再指示其写 config | `r15-lint.mjs` 新栈默认值与 `remediation` 用例 |
+| monorepo 根目录无清单时只报 `unknown` | 用户拿不到「框架到底看见了什么」，代理倾向反复重跑或试探绕过 | 根目录探测失败时递归（深度 ≤ 3、跳过豁免目录、上限 20 条）扫出子项目写入 `subProjects`；**只诊断不猜命令**——替 monorepo 猜会在错误目录跑错误命令，或跑出空转的「通过」（R12） | `r15-lint.mjs`「monorepo 诊断」用例 |
+| npm `Missing script: "lint"` 被判为 `lint-failed` | 项目**根本没配 linter**（一条规则都没检查过）却被门禁描述成「代码有 lint 违规」，DE 被派去修一个不存在的缺陷——与 **R38** 要消除的错误指引同源 | 新增 `lint-not-configured` 判据（包管理器明确说找不到脚本时命中，宁漏不误），经 `checkLintClean` 原样上浮到 `state.lintReason`，stop 门禁改为按性质三路分流 | `r15-lint.mjs`「lint-not-configured 不得与违规/工具不可用混淆」 |
+
+##### 门禁强度调整留痕（R15 新增栈默认 lint 命令，2026-08-03）
+
+上表第二行中「补默认命令」一项会把若干原本必然失败的状态变成可通过状态，按 R12 反向情形条款留痕。
+
+| 项 | 内容 |
+| -- | ---- |
+| **放松了什么** | .NET / Dart / Elixir / Swift 四栈原本 `no-lint-command` 必然红灯，现分别以 `dotnet build -warnaserror`、`dart analyze`、`mix compile --warnings-as-errors`、`swiftlint` 实际执行 lint——命令通过即门禁通过。判据本身（须有命令且退出码为 0）未变，但**能通过的项目集合扩大了**，性质上属放松 |
+| **声明层是否变化** | **有**。§8.2 R15 原文列举「Java/PHP/.NET 等无默认」，本次把 .NET 移出该列表并新增三栈，故不同于 R16 那次「实现回到既有声明」，本次是声明与实现同时变更 |
+| **为何需要用户确认** | R12 只单向授权「文档强于实现 ⇒ 补实现」；本方向不被自动授权，须呈现证据与影响面并由用户裁定。影响面为**所有宿主项目**的默认行为，大于单项目覆盖 |
+| **选取默认命令的口径** | 只收「工具链自带、且不会空转」的分析器：`dart analyze` / `mix compile --warnings-as-errors` / `dotnet build -warnaserror` 随 SDK 分发，无额外配置也按默认规则真检查；`swiftlint` 需单独安装，但它是 SwiftPM 生态事实标准，未装时由 R38 报 `lint-tool-unavailable` 并给出正确指引，**不会**静默通过 |
+| **为何 Maven / Gradle / PHP / CMake / Make 仍留空** | 这些栈没有「未配插件也能真检查」的通用命令。典型反例 `gradle check -x test`：未启用 checkstyle/ktlint/detekt 时**静默通过**——空转放行比红灯更坏（红灯至少会被发现）。它们改由 `remediation.suggestedCommand` 给候选，由用户确认本项目确已配置后再写覆盖 |
+| **决策** | 经用户于 2026-08-03 明确确认后采用上述四条默认命令；备选的「一律不补默认、维持红灯」被否决——它会把这些栈推向整体豁免，与 R16 那次「不可达门禁终被摘除」的判例同理 |
+| **后续禁止事项** | 不得以本条为先例，给「可能空转」的命令配默认（尤禁 `gradle check`、`make lint`、`exit 0` 类）；不得把「框架无默认命令」当作 `lintApplicability:"n/a"` 的理由；新增默认命令须同时说明「未配置时是否会静默通过」，无法说明的一律留空 |
 
 ### 8.6 交付可用性与体验验收（R32–R33）
 

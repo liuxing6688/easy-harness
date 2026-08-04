@@ -218,7 +218,11 @@ async function main() {
       if (state.execProofFailedGates.length > 0) execProofFollowup();
       if (state.toolUnavailableGates.length > 0) toolUnavailableFollowup();
       // R15：编程规范（lint）硬门禁——QE 完成后、推进测试/收尾前必须通过。
+      // 「没命令」「没配 linter」重跑都不会变，判据自带精确指引（`LINT_FAILURE_GUIDANCE`，
+      // 与 TE 派发门禁共用一份），不得被下面笼统的「请整改违规」覆盖——那会让 DE 去修一个
+      // 从未被检查过的代码库（与 R34/R38 同源的错误指引）。
       if (!state.lintPassed) {
+        if (state.lintMessage) exitFollowup(`【流程门禁】（R15）${state.lintMessage}`);
         exitFollowup(
           '【流程门禁】（R15）QE 记录已完成，但编程规范（lint）门禁未通过。请由 quality-engineer 运行 `node .cursor/scripts/lint-run.mjs` 并将违规整改至 gatePassed=true（机读产物 test-results/qe/.lint-result.json）；确无可用 linter 时须由 system-architect 在 gated-artifacts.json 声明 lintApplicability:"n/a" 且项目经理在 process.md「## 用户确认记录」补一行编程规范豁免确认。lint 未通过前不得推进测试或宣告完成。',
         );

@@ -6,7 +6,7 @@
  */
 import {
   test, fixtureProcess, assert, fs, checkHotfixP0InterfaceStorageMention,
-  recordHotfixP0SoftReminder, recordFailOpenEvent,
+  recordHotfixP0SoftReminder, recordFailOpenEvent, getActiveProcessPath,
 } from './_harness.mjs';
 
 import {
@@ -69,7 +69,7 @@ test('R9 软性提醒: recordHotfixP0SoftReminder 命中时写入一次性非阻
   const r = recordHotfixP0SoftReminder(content);
   assert.equal(r.ok, true);
   assert.equal(r.reason, 'recorded');
-  const md = fs.readFileSync(process.env.HARNESS_PROCESS_PATH, 'utf8');
+  const md = fs.readFileSync(getActiveProcessPath(), 'utf8');
   assert.match(md, /## 门禁软性提醒（非阻塞）/);
   assert.match(md, /接口测试报告|存储对账记录/);
   // blocking 不应被本机制置为 true（区别于 recordFailOpenEvent 的 fail-open 语义）
@@ -83,11 +83,11 @@ test('R9 软性提醒: recordHotfixP0SoftReminder 幂等——同一 process.md 
     },
   );
   recordHotfixP0SoftReminder(content);
-  const first = fs.readFileSync(process.env.HARNESS_PROCESS_PATH, 'utf8');
+  const first = fs.readFileSync(getActiveProcessPath(), 'utf8');
   const r2 = recordHotfixP0SoftReminder(content);
   assert.equal(r2.ok, true);
   assert.equal(r2.reason, 'already-recorded');
-  const second = fs.readFileSync(process.env.HARNESS_PROCESS_PATH, 'utf8');
+  const second = fs.readFileSync(getActiveProcessPath(), 'utf8');
   assert.equal(first, second, '第二次调用不应再追加内容');
 });
 test('R9 软性提醒: 不满足条件（needsReminder=false）时不写入', () => {
@@ -100,7 +100,7 @@ test('R9 软性提醒: 不满足条件（needsReminder=false）时不写入', ()
   const r = recordHotfixP0SoftReminder(content);
   assert.equal(r.ok, true);
   assert.equal(r.reason, 'not-needed');
-  const md = fs.readFileSync(process.env.HARNESS_PROCESS_PATH, 'utf8');
+  const md = fs.readFileSync(getActiveProcessPath(), 'utf8');
   assert.doesNotMatch(md, /## 门禁软性提醒/);
 });
 test('R9 软性提醒: cancelled 流程不写入', () => {

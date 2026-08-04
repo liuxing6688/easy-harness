@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { detectStackFromFileNames, STACK_LINT_COMMANDS } from './lint-run-lib.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -25,65 +26,29 @@ const HARNESS_CONFIG = path.join(PROJECT_ROOT, '.trae/harness.config.json');
 const RESULT_DIR = path.join(PROJECT_ROOT, 'test-results/qe');
 
 /**
- * 技术栈探测表：清单文件 → 默认 test/lint/audit 命令。
- * lint 空串表示该栈无默认 linter（与 lint-run-lib.STACK_LINT_COMMANDS 口径一致）。
+ * 各技术栈默认 test/audit 命令；空串表示该栈无默认命令（记为 skipped）。
+ *
+ * **lint 一列不在这里**：探测表与 lint 默认命令都从 `lint-run-lib.mjs` 取（`STACK_MANIFESTS`
+ * / `STACK_LINT_COMMANDS`）。历史实现两个运行器各抄一份，注释写着「口径一致」却只能靠人眼
+ * 维持——真实后果是本表长期停在 10 个栈，与门禁纳管的构建清单脱节（§8.2 R15）。
  */
-const STACK_DETECTORS = [
-  {
-    stack: 'node',
-    manifest: 'package.json',
-    commands: { test: 'npm test', lint: 'npm run lint', audit: 'npm audit' },
-  },
-  {
-    stack: 'python',
-    manifest: 'pyproject.toml',
-    commands: { test: 'pytest', lint: 'ruff check .', audit: 'pip-audit' },
-  },
-  {
-    stack: 'python-requirements',
-    manifest: 'requirements.txt',
-    commands: { test: 'pytest', lint: 'ruff check .', audit: 'pip-audit' },
-  },
-  {
-    stack: 'go',
-    manifest: 'go.mod',
-    commands: { test: 'go test ./...', lint: 'go vet ./...', audit: 'govulncheck ./...' },
-  },
-  {
-    stack: 'rust',
-    manifest: 'Cargo.toml',
-    commands: { test: 'cargo test', lint: 'cargo clippy', audit: 'cargo audit' },
-  },
-  {
-    stack: 'java-maven',
-    manifest: 'pom.xml',
-    commands: {
-      test: 'mvn test',
-      lint: '',
-      audit: 'mvn org.owasp:dependency-check-maven:check',
-    },
-  },
-  {
-    stack: 'java-gradle',
-    manifest: 'build.gradle',
-    commands: { test: 'gradle test', lint: '', audit: 'gradle dependencyCheckAnalyze' },
-  },
-  {
-    stack: 'php',
-    manifest: 'composer.json',
-    commands: { test: 'composer test', lint: '', audit: 'composer audit' },
-  },
-  {
-    stack: 'ruby',
-    manifest: 'Gemfile',
-    commands: { test: 'bundle exec rspec', lint: 'rubocop', audit: 'bundle audit' },
-  },
-  {
-    stack: 'dotnet',
-    manifest: '*.sln',
-    commands: { test: 'dotnet test', lint: '', audit: 'dotnet list package --vulnerable' },
-  },
-];
+const STACK_TEST_AUDIT_COMMANDS = {
+  node: { test: 'npm test', audit: 'npm audit' },
+  python: { test: 'pytest', audit: 'pip-audit' },
+  'python-requirements': { test: 'pytest', audit: 'pip-audit' },
+  go: { test: 'go test ./...', audit: 'govulncheck ./...' },
+  rust: { test: 'cargo test', audit: 'cargo audit' },
+  'java-maven': { test: 'mvn test', audit: 'mvn org.owasp:dependency-check-maven:check' },
+  'java-gradle': { test: 'gradle test', audit: 'gradle dependencyCheckAnalyze' },
+  php: { test: 'composer test', audit: 'composer audit' },
+  ruby: { test: 'bundle exec rspec', audit: 'bundle audit' },
+  dotnet: { test: 'dotnet test', audit: 'dotnet list package --vulnerable' },
+  dart: { test: 'dart test', audit: 'dart pub outdated' },
+  elixir: { test: 'mix test', audit: 'mix hex.audit' },
+  swift: { test: 'swift test', audit: '' },
+  'cpp-cmake': { test: 'ctest --test-dir build', audit: '' },
+  make: { test: '', audit: '' },
+};
 
 /** 解析 `--key=value` CLI 参数。 */
 function parseArgs(argv) {
@@ -95,25 +60,18 @@ function parseArgs(argv) {
   return result;
 }
 
-/** @param {string} pattern 清单文件名或通配 */
-function manifestExists(pattern) {
-  if (!pattern.includes('*')) {
-    return fs.existsSync(path.join(PROJECT_ROOT, pattern));
-  }
-  const re = new RegExp(`^${pattern.replace(/\./g, '\\.').replace(/\*/g, '.*')}$`, 'i');
-  try {
-    return fs.readdirSync(PROJECT_ROOT).some((f) => re.test(f));
-  } catch {
-    return false;
-  }
-}
-
-/** @returns {typeof STACK_DETECTORS[number]|null} */
+/** @returns {{ stack: string, commands: { test: string, lint: string, audit: string } }|null} */
 function detectStack() {
-  for (const detector of STACK_DETECTORS) {
-    if (manifestExists(detector.manifest)) return detector;
+  let names = [];
+  try {
+    names = fs.readdirSync(PROJECT_ROOT);
+  } catch {
+    return null;
   }
-  return null;
+  const stack = detectStackFromFileNames(names);
+  if (!stack) return null;
+  const { test = '', audit = '' } = STACK_TEST_AUDIT_COMMANDS[stack] ?? {};
+  return { stack, commands: { test, lint: STACK_LINT_COMMANDS[stack] ?? '', audit } };
 }
 
 /** 读取 harness.config.json → qe.commands 覆盖表（可部分覆盖）。 */

@@ -5,7 +5,7 @@
  * 脚手架：./_harness.mjs（仅导入本套件实际使用的符号，见该目录 README）
  */
 import {
-  test, fixtureProcess, assert, path, fs, isProcessBlocked, recordFailOpenEvent, PROJECT_ROOT,
+  test, fixtureProcess, assert, path, fs, isProcessBlocked, recordFailOpenEvent, getActiveProcessPath, PROJECT_ROOT,
 } from './_harness.mjs';
 
 test('§8.4: recordFailOpenEvent 写入 blocking 与门禁异常事件', () => {
@@ -25,7 +25,7 @@ test('§8.4: recordFailOpenEvent 写入 blocking 与门禁异常事件', () => {
   );
   const r = recordFailOpenEvent('gate-selftest', 'runtime', new Error('boom'));
   assert.equal(r.ok, true);
-  const md = fs.readFileSync(process.env.HARNESS_PROCESS_PATH, 'utf8');
+  const md = fs.readFileSync(getActiveProcessPath(), 'utf8');
   assert.match(md, /blocking:\s*true/);
   assert.match(md, /## 门禁异常事件/);
   assert.match(md, /gate-selftest/);

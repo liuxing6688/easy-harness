@@ -522,9 +522,24 @@ export function runHook({
   return { outcome, verdict, stderr: res.stderr };
 }
 
+/**
+ * @param {object} opts 传给 runHook 的参数；另支持 `mustInclude`（字符串或数组）：
+ *   要求门禁消息含指定片段。用于钉死「同一个 deny/followup 结论下，给出的**解法方向**
+ *   是否正确」——判定对但指引错（如把「还没配 linter」说成「快去整改违规」）在类型断言下
+ *   完全看不出来，而那正是 R38 / R15 失败性质细分要解决的问题。
+ */
 export function check(label, expect, opts) {
   const { outcome, verdict } = runHook(opts);
-  const ok = outcome === expect;
+  const message = String(verdict.user_message ?? verdict.followup_message ?? '');
+  const required = [opts.mustInclude ?? []].flat();
+  const missing = required.filter((fragment) => !message.includes(fragment));
+  const ok = outcome === expect && missing.length === 0;
+  if (missing.length > 0 && outcome === expect) {
+    failCount += 1;
+    failures.push({ label, expect: `含「${missing.join('」「')}」`, outcome: '文案不符' });
+    console.error(`  FAIL  文案缺片段「${missing.join('」「')}」 :: ${label}`);
+    return;
+  }
   if (ok) {
     passCount += 1;
     console.log(`  PASS  expect=${expect} got=${outcome} :: ${label}`);
@@ -627,6 +642,33 @@ export function writeLintStale() {
     command: 'npm run lint',
     exitCode: 0,
     executedAt: '2020-01-01T00:00:00.000Z',
+  });
+}
+
+/** R15：框架探测不到该栈的 lint 命令（未登记的栈 / monorepo 根无清单）——重跑不会变 */
+export function writeLintNoCommand() {
+  writeLintResultFixture({
+    gatePassed: false,
+    reason: 'no-lint-command',
+    stack: 'unknown',
+    command: null,
+    exitCode: null,
+    subProjects: [{ dir: 'packages/api', stack: 'node' }],
+    remediation: { configPath: '.cursor/harness.config.json', suggestedCommand: null },
+    executedAt: new Date().toISOString(),
+  });
+}
+
+/** R15：命令跑了但项目没配 linter（npm 缺 scripts.lint）——须补配置，不是整改违规 */
+export function writeLintNotConfigured() {
+  writeLintResultFixture({
+    gatePassed: false,
+    reason: 'lint-not-configured',
+    notConfigured: true,
+    stack: 'node',
+    command: 'npm run lint',
+    exitCode: 1,
+    executedAt: new Date().toISOString(),
   });
 }
 

@@ -676,15 +676,44 @@ export function checkLintClean(content) {
   const md = content ?? readProcessMd() ?? '';
   if (getWorkflowMode(md) === 'docs-only') return { ok: true, reason: 'docs-only' };
   if (isLintExempt(md)) return { ok: true, reason: 'lint-exempt' };
-  return evaluateGateArtifact({
+  const verdict = evaluateGateArtifact({
     kind: 'lint',
     artifact: readLintResult(),
     missingReason: 'no-lint-result',
     unavailableReason: 'lint-tool-unavailable',
     isPassed: (a) => a.gatePassed === true,
-    failedReason: 'lint-not-passed',
+    // 「探测不到 lint 命令」与「项目没配 linter」都不是代码违规，须原样上浮到 stop 门禁，
+    // 否则会被压成 lint-not-passed，指引变成「让 DE 去整改」一个还没被检查过的代码库。
+    failedReason: (a) =>
+      a.reason === 'no-lint-command' || a.reason === 'lint-not-configured'
+        ? a.reason
+        : 'lint-not-passed',
   });
+  const guidance = LINT_FAILURE_GUIDANCE[verdict.reason];
+  return guidance && !verdict.ok ? { ...verdict, message: guidance } : verdict;
 }
+
+/**
+ * R15 中两类「跑了也没检查成」的失败的处置指引（§8.2 失败性质四分）。
+ *
+ * 由判据本身携带、stop 门禁与 TE 派发门禁共用同一份文案：这两处历史上各写各的
+ * 「请整改 lint 违规」，任何一侧改口径都不会带上另一侧。指引的要害是**别把方向指错**——
+ * 让 DE 去整改一个一条规则都没跑过的代码库，比不给指引更浪费。
+ */
+export const LINT_FAILURE_GUIDANCE = Object.freeze({
+  'no-lint-command':
+    'lint 门禁未通过的原因是**框架探测不到本项目的默认 lint 命令**（reason=no-lint-command），不是代码有违规——重跑 `lint-run.mjs` 不会改变结果。' +
+    '请查看 test-results/qe/.lint-result.json 的 `remediation` 字段（含探测到的技术栈、monorepo 子项目清单与可直接粘贴的配置片段），' +
+    '由 project-manager 标 blocking 并用 AskQuestion 请用户在两条路径中决策：' +
+    '①由**用户本人**在 `.trae/harness.config.json` 写 `qe.commands.lint` 覆盖（该文件受 R29 锁定，system-architect 与其它任何代理都不得代写，只能呈现片段请用户粘贴）；' +
+    '②确无可用 linter 时走双要素豁免（gated-artifacts.json 声明 lintApplicability:"n/a" + process.md「## 用户确认记录」补一行编程规范豁免确认）。' +
+    '「框架没有默认命令」本身不是豁免理由，代理不得自行选择路径，也不得据此推进测试或宣告完成。',
+  'lint-not-configured':
+    'lint 门禁未通过的原因是**本项目还没配置 linter**（reason=lint-not-configured，如 package.json 缺 `scripts.lint`），命令跑起来了但一条规则都没检查过——既不是代码违规，也不是环境问题。' +
+    '请由 project-manager 分派 development-engineer 补齐 linter 配置（如 eslint/ruff 配置文件 + 对应 `scripts.lint`，属产品工程化资产，走正常开发门禁），' +
+    '再由 quality-engineer 重跑 `node .trae/scripts/lint-run.mjs` 至 gatePassed=true。' +
+    '**不得**把它当成「整改 lint 违规」，也不得改走双要素豁免绕过（本项目并非无可用 linter）。',
+});
 
 /**
  * R16：静态代码质量门禁是否通过（供发起 test-engineer 前机械校验，与 checkLintClean 并列）。
