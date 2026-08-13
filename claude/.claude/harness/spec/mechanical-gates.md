@@ -24,18 +24,18 @@
 
 ## 8. 流程门禁 Hook（机械约束）
 
-本项目通过 Cursor Hook 对高风险操作做**确定性拦截**，与 `CLAUDE.md` §5 文字规则互补。门禁路径与 Shell 模式以 `harness.config.json` 为默认，并与当前活跃 `docs/**/design/gated-artifacts.json`（可选，架构师维护）合并。活跃路径由 `.claude/harness-state.json` 或 `HARNESS_PROCESS_PATH` 决定。
+本项目通过 Claude Code Hook 对高风险操作做**确定性拦截**，与 `CLAUDE.md` §5 文字规则互补。Hook 注册的**唯一权威源**是 `.claude/settings.json`（`.claude/hooks/hooks.json` 不是 Claude Code 支持的配置位置，放在那里永不加载）。门禁路径与 Shell 模式以 `harness.config.json` 为默认，并与当前活跃 `docs/**/design/gated-artifacts.json`（可选，架构师维护）合并。活跃路径由 `.claude/harness-state.json` 或 `HARNESS_PROCESS_PATH` 决定。
 
 ### 8.1 Hook 一览
 
 | Hook | 触发时机 | 拦截范围 | 放行条件 |
 | ---- | -------- | -------- | -------- |
-| `gate-dev-workflow` | `preToolUse`（Write / StrReplace / ApplyPatch / Delete / EditNotebook） | 源码/构建/根敏感路径（同前）+ **R6** `.claude/scripts\|agents\|hooks/**` + **`docs` 角色成果物**（`requirement`/`design`/`quality`/`test`/`process.md`，见 `isGatedRoleArtifactPath`）；`docs/` 下非文档扩展名亦按源码门禁；**R6 加强**：代码扩展名默认受门禁（豁免目录见 `gatedPaths.extensionGateExemptDirs`，§8.5）；**R29**：门禁自治资产（运行时标记 / 授权凭证 / 门禁配置与权威文本）一律 deny。仍豁免：templates/rules（见 `dotCursorExemptPatterns`） | 判定顺序：**R10 cancelled** → **R29 自治资产** → **R5 身份基准健康度告警** → **R5 顶层 conversation_id** → **R5 角色↔路径** →（仅源码路径）`docs-only`/分派计划/**R3**/**R9**/阻塞 → 放行 |
-| `gate-dev-shell` | `beforeShellExecution` | `harness.config.json` 中 `gatedShellPatterns` 及项目额外模式（项目初始化、依赖安装等）；**R22**：最近派发为 `test-engineer` 时另拦截替代 E2E 启动命令（`checkTeAlternativeE2eStartup`，见 §8.4）；**R28**：写文件类命令按目标路径套用与 Write 同等判据（§8.5） | 判定顺序：R22 TE 冒烟 → **R28 写文件意图**（R29 自治资产 / opaque 写入 / 目标路径判据）→ `gatedShellPatterns` 命中则同 `gate-dev-workflow` 放行条件（含 R3/R9/R10） |
-| `gate-toolchain-install` | `beforeShellExecution` | `harness.config.json` 中 `toolchain.installPatterns`（winget、brew、apt、mise、asdf、nix、VS Build Tools 等） | 存在有效 `.toolchain-install-approved.json`：须 `userConfirmed: true` + 有效时间戳 + **`commandHash` 与本次命令匹配**（**R29 加强**，§8.5） |
-| `gate-role-sequence`（**R13**） | `preToolUse`（Agent） | 发起角色 Agent 前按门禁链机械校验（同前：R19/**R33**/R18/R15/R16 等）；**R10**：活跃流程 `cancelled` 时拒绝除 `project-manager` 外的**全部**角色（先于「不在门禁表即放行」的短路）；**R20**：声明轻量模式但缺「工作流模式确认」时拒绝除 PM/RA 外角色；**放行或 fail-open 前**对可解析角色执行 `recordDispatchedRole`（供 R5 角色↔路径） | 前置条件满足；或目标角色不在门禁表中（`project-manager`/`requirements-analyst` 恒放行，但仍落盘派发记录）；或解析不到目标角色名；`failClosed: false` |
-| `gate-subagent-track`（**R5**） | `subagentStart` | 仅记录顶层 `conversation_id`（TTL 内不覆盖、超 TTL 自愈，见 §8.5）；从不 deny | 恒 `allow`（fail-open） |
-| `gate-stop-workflow` | `stop` | 代理拟结束回合时流程未完成（含 **R15 编程规范 lint 门禁未通过**、**R16 静态代码质量门禁未通过**、**R32 生产启动冒烟无通过证据**、**R31 回退计数超上限**） | 见下方 **stop 门禁判据**；`blocking: true` 或 **`cancelled: true`（R10）** 时放行 |
+| `gate-dev-workflow-enhanced` | `PreToolUse`（matcher `Write|Edit`） | 源码/构建/根敏感路径（同前）+ **R6** `.claude/scripts\|agents\|hooks/**` + **`docs` 角色成果物**（`requirement`/`design`/`quality`/`test`/`process.md`，见 `isGatedRoleArtifactPath`）；`docs/` 下非文档扩展名亦按源码门禁；**R6 加强**：代码扩展名默认受门禁（豁免目录见 `gatedPaths.extensionGateExemptDirs`，§8.5）；**R29**：门禁自治资产（运行时标记 / 授权凭证 / 门禁配置与权威文本）一律 deny。仍豁免：templates/rules（见 `dotClaudeExemptPatterns`） | 判定顺序：**R10 cancelled** → **R29 自治资产** → **R5 身份基准健康度告警** → **R5 顶层 conversation_id** → **R5 角色↔路径** →（仅源码路径）`docs-only`/分派计划/**R3**/**R9**/阻塞 → 放行 |
+| `gate-dev-shell` | `PreToolUse`（matcher `Bash|PowerShell`） | `harness.config.json` 中 `gatedShellPatterns` 及项目额外模式（项目初始化、依赖安装等）；**R22**：最近派发为 `test-engineer` 时另拦截替代 E2E 启动命令（`checkTeAlternativeE2eStartup`，见 §8.4）；**R28**：写文件类命令按目标路径套用与 Write 同等判据（§8.5） | 判定顺序：R22 TE 冒烟 → **R28 写文件意图**（R29 自治资产 / opaque 写入 / 目标路径判据）→ `gatedShellPatterns` 命中则同 `gate-dev-workflow` 放行条件（含 R3/R9/R10） |
+| `gate-toolchain-install` | `PreToolUse`（matcher `Bash|PowerShell`） | `harness.config.json` 中 `toolchain.installPatterns`（winget、brew、apt、mise、asdf、nix、VS Build Tools 等） | 存在有效 `.toolchain-install-approved.json`：须 `userConfirmed: true` + 有效时间戳 + **`commandHash` 与本次命令匹配**（**R29 加强**，§8.5） |
+| `gate-role-sequence`（**R13**） | `PreToolUse`（matcher `Agent`） | 发起角色 Agent 前按门禁链机械校验（同前：R19/**R33**/R18/R15/R16 等）；**R10**：活跃流程 `cancelled` 时拒绝除 `project-manager` 外的**全部**角色（先于「不在门禁表即放行」的短路）；**R20**：声明轻量模式但缺「工作流模式确认」时拒绝除 PM/RA 外角色；**放行或 fail-open 前**对可解析角色执行 `recordDispatchedRole`（供 R5 角色↔路径） | 前置条件满足；或目标角色不在门禁表中（`project-manager`/`requirements-analyst` 恒放行，但仍落盘派发记录）；或解析不到目标角色名；`failClosed: false`。**能力边界（F-27）**：本 Hook 校验的是「下一角色所需成果物是否已存在且有效」（R13 门禁链），**不校验 frontmatter `phase` 的阶段序关系**——规约未定义 `phase` 的取值域与偏序，出厂模板即处于 `phase: requirement` 且在成果物齐备时允许直接发起 system-architect（回归 `scenarios/finding1.mjs` B1）。故 **R8「不得跳过前一角色」的阶段顺序维度由 `CLAUDE.md` §5.8 文字约束承担**，机械层拦的是「前一角色成果物未落地就派后一角色」。多轮迭代下成果物恒在，此时区分度由 **F-09/F-17 轮次时效判据**（`iterationRound`）承担 |
+| `gate-subagent-track`（**R5**） | `SubagentStart` | 仅记录顶层 `conversation_id`（TTL 内不覆盖、超 TTL 自愈，见 §8.5）；从不 deny | 恒 `allow`（fail-open） |
+| `gate-stop-workflow` | `Stop` | 代理拟结束回合时流程未完成（含 **R15 编程规范 lint 门禁未通过**、**R16 静态代码质量门禁未通过**、**R32 生产启动冒烟无通过证据**、**R31 回退计数超上限**） | 见下方 **stop 门禁判据**；`blocking: true` 或 **`cancelled: true`（R10）** 时放行 |
 
 Hook 解析 `## 进度列表` 时同时识别中文角色名与 `.claude/agents` 的 agent slug（如 `开发工程师` / `development-engineer`），项目经理可按 Agent 实际发起名称留痕。
 
@@ -76,7 +76,11 @@ Hook 解析 `## 进度列表` 时同时识别中文角色名与 `.claude/agents`
 >
 > **进度列表识别规则**：测试工程师行若含「最终整体集成测试」「最终集成测试」「TE-FINAL」「TE-最终」之一，计入最终测试；其余测试工程师行计入批次测试。`finalTestRequired` 的完整公式见 R11（hotfix）与上表（非 hotfix）。
 >
-> **B1 最新有效状态统计**：`gate-stop-workflow` 对 `## 进度列表` 按**任务包编号**取最新有效状态（后出现覆盖先出现）；`已作废` / `superseded` 行作为 tombstone 使该任务包退出统计。任务包编号须写在进度行「任务名称」列，使用**大写多段编号**（如 `A-DOC-1`、`B-LIB-1/2/3` 互不合并）；作废行亦须含被作废任务包编号以便精确 tombstone。`iterationType` 缺失时 R3 按 `full` 兜底校验四件成果物（不得因缺字段豁免，R12）；仅已确认的 `hotfix` / `docs-only` 豁免 R3。
+> **B1 最新有效状态统计**：`gate-stop-workflow` 对 `## 进度列表` 按**任务包编号**取最新有效状态（后出现覆盖先出现）；`已作废` / `superseded` 行作为 tombstone 使该任务包退出统计。任务包编号须写在进度行「任务名称」列，使用**大写多段编号**（如 `A-DOC-1`、`B-LIB-1/2/3` 互不合并）；作废行亦须含被作废任务包编号以便精确 tombstone。
+
+> **任务包编号形态（唯一权威定义，全框架同源）**：**首段以大写字母开头（可含数字），其后至少一个 `-` / `/` / `.` 分隔段**，机读正则 `/\b[A-Z][A-Z0-9]*(?:[-/.][A-Z0-9]+)+\b/`。合规示例 `T0-1`、`T-DOC-1`、`A-DOC-1`、`B-LIB-1/2/3`、`INC.A-2`；不合规示例 `待补`、`todo-1`（小写）、`A`/`ABC`（无分隔段）。本条同时是 **B1 进度统计**、**R17 对账「关联任务包」**、**R18 覆盖矩阵「任务包」列**（`design.mjs` `TASK_PACK_ID_RE` / `extractTaskPackIds` / `taskPackExistsInList`）的共同判据——**T 前缀不是硬约束**。
+>
+> F-12（2026-08-11 审核修复）：历史实现 R18 侧为 `/\bT[\w./-]+\b/`，要求首字母必须为 T，于是本条亲自举例的 `A-DOC-1`、`B-LIB-1/2/3` 在 R18 处一律 `p0-task-id-unparseable`，理由行还只提示「如 T0-1」；同时 `taskPackExistsInList` 用同一 T 正则判 stub，导致任务清单里全是非 T 编号时交叉校验被整体跳过而**静默放行**。按 R12（文档强于实现须补实现，不得反向削减文档）对齐到本条形态，并把 stub 判据与提取判据同源。回归：`selftest/r18-design-review.mjs` F-12 组。`iterationType` 缺失时 R3 按 `full` 兜底校验四件成果物（不得因缺字段豁免，R12）；仅已确认的 `hotfix` / `docs-only` 豁免 R3。
 >
 > **双要素豁免机制（总则，唯一权威定义，适用于下表全部门禁）**：本框架任何机械门禁的「确不适用 / 确无法运行」豁免，**一律**须**同时**满足两项要素方可生效——**仅满足一项不生效**（防单方面弱化，R12）：
 > 1. 系统架构师在活跃 `gated-artifacts.json` 中声明对应 `{gate}Applicability: "n/a"` + `{gate}ApplicabilityReason`（简述理由）；
@@ -108,8 +112,10 @@ Hook 解析 `## 进度列表` 时同时识别中文角色名与 `.claude/agents`
 > - **默认工具**：重复代码检测 `jscpd-rs`（`npx --yes jscpd-rs --threshold 5 ...`，5% 阈值超限退出码非 0）；安全静态扫描 `gitleaks-secret-scanner`（`npx --yes gitleaks-secret-scanner ...`，检出密钥即退出码非 0）。
 > - **⚠ 默认命令禁止携带 `--exitCode`（2026-07-29 审核修复，唯一权威）**：jscpd-rs 的两个标志是**两套独立逻辑**——`--threshold N` 为「重复率 ≥ N% 时以错误码退出」（即本节声明的判据），`--exitCode N` 为「**只要检出任何重复**就用该退出码」（与阈值无关）。历史默认命令同时带 `--exitCode 1`，使 `--threshold 5` **完全失效**，R16 实际退化为**零重复容忍**——任何真实宿主项目都不可能通过，属与 R19 出厂模板缺陷同级的硬阻塞。实测（本仓库 2.78% 重复率）：`--threshold 5` 退出 0，加 `--exitCode 1` 后退出 1，`--threshold 1` 退出 1（证明阈值本身工作正常）。移除 `--exitCode` 是让实现回到**文档声明的判据**，**不是**放松门禁（R12）；反之，重新加回 `--exitCode` 属于把门禁改成一个不可达标准，等同于让 R16 永久红灯，一律禁止。机读回归：`tests/selftest/r16-static-scan.mjs`「默认命令不得含 `--exitCode`」。**命令解析优先级**：`harness.config.json → qe.commands.dupCheck`/`qe.commands.securityScan` 覆盖 > 框架默认值；多数项目不必手配 config。
 > - **判据**：`staticScanPassed = (dupCheckExempt || duplication.gatePassed) && (securityScanExempt || security.gatePassed)`；`docs-only` 视为满足。QE 记录完成但 `staticScanPassed=false` 时 `gate-stop-workflow` 注入 followup，且**不得发起 test-engineer**（判定函数见 `rule-index.md`）。
+> - **⚠ 重复率须「退出码 + 报告」双判（2026-08-11 审核修复 F-13，唯一权威）**：历史 `duplication.gatePassed` **只**看 `exitCode === 0`，从不把 jscpd JSON 报告里的总重复率与 `--threshold` 比对。于是只要工具因任何原因以 0 退出（版本差异、阈值标志语义变化、报告已写盘但退出码未反映），子门禁即失去判别力——实测出现过 `duplication.gatePassed = true` 而 `output` 同时列出 20 余处 `Clone found` 的组合。现改为**双判**：`exitCode === 0` **且** 报告重复率 `< --threshold` 才通过，任一判失败即失败（`static-scan-run.mjs` `applyDupReportGate`）。产物新增 `duplication.reportPercentage` / `duplication.reportThreshold` 两个机读字段。**报告缺失或不可解析时不放行**（`reason: 'dup-report-unreadable'`）——R16 的判别力依赖报告，读不到报告等于没测；这与 R38「工具确实跑不起来」是**不同出口**，后者仍由退出码通道识别并走双要素豁免。判定函数：`parseDupThreshold` / `extractDupPercentage` / `evaluateDuplicationReport`（`static-scan-run-lib.mjs`）；回归见 `r16-static-scan.mjs` F-13 四条。
+> - **⚠ 默认 `--ignore` 须排除 harness 自身（2026-08-11 审核修复 F-13，唯一权威）**：历史默认值未排除 `.claude/**` 与 `migration/**`，于是门禁自身的 3 万余行（含 `.claude/scripts/tests/**` 里成片同构的 fixture 与用例）全部进入重复率**分母**。实测本仓库 `lines: 32120 / sources: 204`，49 对克隆中 48 对落在 `.claude/scripts/tests/**` 与 `migration/docs/**`，业务侧重复率被摊薄约两个数量级。规约此前只防了「把门槛调松」（禁止提高 `--threshold`），没防「把分母掺大」——两者对判别力的影响同向，故一并禁止（R12）。默认命令现固定排除 `.claude/**` 与 `migration/**`；回归见 `r16-static-scan.mjs`「默认 `--ignore` 须排除 `.claude/**` 与 `migration/**`」。
 > - **适用性豁免**：见上表 R16 两行（重复代码/安全扫描分别独立判定）。
-> - **反弱化条款（2026-07-28 QE R16 消重复盘新增，R12 显式化）**：**禁止**以「降低打回率/减少误报体感」为由提高 `jscpd-rs --threshold`、扩大 `--ignore` 排除目录（默认排除目录——`node_modules`/`dist`/`build`/`vendor`/`target`/`coverage`/`.git`/`test-results`——以外的任何收窄）或缩减 `--reporters`，也**禁止**加回 `--exitCode`（后者不是收紧而是把门禁改成不可达标准，见上一条）。确因目录结构特殊（如 monorepo 内确需排除的生成代码目录）需要覆盖 `qe.commands.dupCheck` 时，须在质量报告与 `detail-design-spec.md` §5 写明**具体排除路径 + 排除理由**；**修改阈值**（无论升高或降低）一律视为需要用户确认的机械门禁调整，须在 `process.md`「## 用户确认记录」留痕说明理由，否则 QE 不得采用覆盖值——该调整不受本节其余「多数项目不必手配 config」的默认豁免。
+> - **反弱化条款（2026-07-28 QE R16 消重复盘新增，R12 显式化）**：**禁止**以「降低打回率/减少误报体感」为由提高 `jscpd-rs --threshold`、扩大 `--ignore` 排除目录（默认排除目录——`node_modules`/`dist`/`build`/`vendor`/`target`/`coverage`/`.git`/`test-results`，以及门禁自身的 `.claude`/`migration`（F-13，见上）——以外的任何收窄；**缩小**默认排除集同样禁止，删掉 `.claude`/`migration` 即把分母重新掺大）或缩减 `--reporters`，也**禁止**加回 `--exitCode`（后者不是收紧而是把门禁改成不可达标准，见上一条）。确因目录结构特殊（如 monorepo 内确需排除的生成代码目录）需要覆盖 `qe.commands.dupCheck` 时，须在质量报告与 `detail-design-spec.md` §5 写明**具体排除路径 + 排除理由**；**修改阈值**（无论升高或降低）一律视为需要用户确认的机械门禁调整，须在 `process.md`「## 用户确认记录」留痕说明理由，否则 QE 不得采用覆盖值——该调整不受本节其余「多数项目不必手配 config」的默认豁免。
 >
 > **R25（设计阶段「同构模块识别」章节机读，唯一权威定义，2026-07-28 QE R16 消重复盘新增）**：发起 `requirement-reviewer` 前（`full`/`single-task`，`hotfix`/`docs-only` 豁免），`checkIsomorphicModuleSectionReady()` 校验活跃 `detail-design-spec.md` 是否含「## 同构模块识别（须逐项列出）」章节：设计文档为 stub（仅标题、无正文）时跳过；非 stub 时须**要么**含「同构组名称」+「共享 Primitive 名称」两列的表格且至少一条真实数据行（每行两列均非空），**要么**显式声明「已排查，无同构资源族」并附非空排查依据（去除标点空白后不少于 4 字）。缺章节/章节为空/表格无数据行/声明缺依据时 `gate-role-sequence` 拒绝发起 `requirement-reviewer`。**背景**：R16 全仓重复代码复盘发现相似资源族（CRUD 路由、页面脚手架、测试 fixture、E2E helper）在设计阶段未被前置识别，并行开发工程师各自「复制改」导致 QE 首轮必然因 duplication 打回；本规则要求设计阶段前置排查并声明共享 primitive，从源头减少同构克隆。**能力边界**：机读只证明「该章节存在且非占位敷衍」，不证明排查是否穷尽、共享 primitive 设计是否合理——语义充分性仍由 `requirement-reviewer`「架构设计原则」维度人工审核。
 >
@@ -121,8 +127,21 @@ Hook 解析 `## 进度列表` 时同时识别中文角色名与 `.claude/agents`
 
 - **两级范围**：①**批次集成测试**——每批次 QE 通过后，对本批次新交付任务包做集成测试；②**最终整体集成测试**——全部任务包与各批次 E2E 闭环后，对整个产品做端到端集成测试。`测试判定`（最终交付依据）以**最终整体集成测试**（含最终 E2E）结论为准。
 - **执行命令与产物**：批次 `node .claude/scripts/e2e-run.mjs --scope=batch --required-ids=<本批次P0>` → `test-results/e2e/.e2e-batch-result.json`；最终 `node .claude/scripts/e2e-run.mjs --scope=final --baseline=<requirement-list.md>` → `test-results/e2e/.e2e-final-result.json`。
+- **Playwright 配置约束（唯一权威定义；本节承载该知识，不再只寄存于模板文件注释）**：项目根 `playwright.config.*` 是 E2E 机械门禁的运行时依赖（缺失即 `gatePassed=false, reason=missing-playwright-config`）。harness 模板在项目根**自带** `playwright.config.ts`，接入既有项目时须随 `e2e/` 一并复制。该文件按 §8.5 R6 属**受门禁产品源码**（`testConfigs` 明列），期望角色为 **development-engineer**：测试工程师**不得**自行创建或改写它（R5/R21 判 deny），需要调整时须由 PM 回派 DE。改写时必须满足：
+  1. **`outputDir` 不得是门禁产物目录 `test-results/qe`、`test-results/e2e`、`test-results/recon` 的祖先或自身**（自动覆盖 `test-results/` 与仓库根这两种最危险写法）——Playwright 每次运行前**清空** `outputDir`，指向 `test-results/` 会连带删除 `.lint-result.json`（R15）、`.static-scan-result.json`（R16）、`.startup-smoke-result.json`（R32）、`recon/*.json`（R17）与上一轮 `.e2e-batch-result.json`，造成「跑一次 E2E 就要重跑整套 QE」以及批次↔最终 ping-pong 死锁。模板取 `outputDir: 'test-results/pw-artifacts/'`（与门禁产物同级隔离），自定义时须保持同等隔离性；
+     - **本条已由机械层兜底（F-05 加固，唯一执行权威 `e2e-run-lib.mjs#checkPlaywrightOutputDir`，在 `e2e-run.mjs` 跑 Playwright **之前**执行）**：违规即 `gatePassed=false` 并直接退出，绝不「跑完再判」——跑完时证据已经被删了。三类拒绝理由：`playwright-outputdir-clobbers-gate-artifacts`（祖先或自身）、`playwright-outputdir-undeclared`（**未声明即拒**：Playwright 的默认值正是 `test-results/`，「没写」不等于安全）、`playwright-outputdir-not-literal`（值不是字符串字面量，静态判不了，fail-closed）。
+     - 该判据**不置** `toolUnavailable`：配置违反 §8.3 是须修复的门禁问题，不得走 **R38** 双要素豁免当成环境问题放过——那正是 F-05 的失效路径（证据消失，而门禁只报得出「产物缺失」）。
+     - 机械判据比本条文字**更严一档**（`test-results/qe` 这类「只清掉一部分证据」的写法同样被拒），属 R12 允许的加强；回归见 `selftest/f05-outputdir.mjs`。
+  2. **JSON reporter 输出固定为 `test-results/e2e/pw-report.json`**——`e2e-run.mjs` 按此硬编码路径解析结论，改名即判为「报告未生成」；
+  3. **仅声明 `chromium` project**（见下条浏览器范围），不新增 Firefox / WebKit。
 - **浏览器范围**：仅需支持 **Chrome 内核浏览器（Chromium，含 Chrome/Edge 等 Chromium-based 浏览器）**，不要求 Firefox / WebKit 覆盖；执行器 Playwright Chromium headless；用例标题含 `[R-xxx]` 追溯标签。**浏览器范围是本机械门禁唯一允许简化的维度**：`gatePassed`、覆盖率、追溯标签等判据不因浏览器范围收窄而放松（需求 1）。
 - **`gatePassed` 公式**：`gatePassed = allPassed && coverageComplete`（Chromium 覆盖全部 required P0 且无未解释 skip 且均通过）。`batchTestRowComplete` / `finalTestRowComplete` 仅反映进度行完成；`batchE2ePassed` / `finalE2ePassed` 读取对应结果文件的 `gatePassed`。`batchTestComplete = batchTestRowComplete && batchE2ePassed && batchApiReportPresent && batchStorageReconPresent && startupSmokePassed`（含 R14 接口测试报告、R17 存储对账与 **R32** 生产启动冒烟机读判据）；`finalTestComplete = finalTestRowComplete && finalE2ePassed && startupSmokePassed`。**`hotfix` 模式下按 R11 折叠**（见 §8.2），`batchTestComplete` 恒真，`finalTestRequired` 不依赖 `batchTestComplete`；但 **R32 并入 `finalTestComplete`，折叠通道同样须有冒烟通过证据**（与 R14/R17 不同，理由见 §8.6）。`e2e-run.mjs` 另将冒烟摘要**回显**进 E2E 结果的 `startupSmoke` 字段，仅供报告与人工审查引用，**不参与** E2E 自身的 `gatePassed`。
+- **⚠ 公式已收紧为三判（2026-08-11 审核修复 F-14 / F-06，唯一权威）**：`gatePassed = playwrightExitCode === 0 && allPassed && coverageComplete`。
+  - **`playwrightExitCode === 0` 为必要条件（F-14）**：历史公式只看解析出来的用例统计，于是 Playwright 自身失败（配置错误、浏览器缺失、`webServer` 起不来、就绪探测被本机代理劫持）时 `totalTests === 0` → `allPassed` 空集恒真 → `gatePassed: true`。**一次都没跑起来被判成全绿**，是 E2E 通道最危险的假通过。
+  - **工具不可用须分流而非放行（F-14）**：`playwrightExitCode !== 0 && totalTests === 0` 时置 `toolUnavailable: true`，交 **R38** 双要素豁免流程处理；**不得**把它混进「测试失败」或悄悄放行。判定见 `e2e-run-lib.mjs` `computeGateResult`。
+  - **`required` 集合不得为空（F-06）**：`--scope=final` 既无 `--required-ids` 也无 `--baseline` 时，历史 `loadRequiredIds()` 返回 `[]`，`coverageComplete` 对空集恒真——**零用例也能 `gatePassed: true`**。现改为**报错退出**（`e2e-run.mjs`），并在 Hook 侧 `checkE2eGate` 增判 `requiredIds` 非空；「P0 集合读不出来」等于覆盖率判据不存在，不是放行理由。
+  - **Hook 侧不得只读 `gatePassed`（F-06 / F-14）**：`qe.mjs` 对结果文件额外兜底校验上述字段，防止旧版本产物或手工构造的 `{gatePassed:true}` 顶替真实结果（与 R34 执行证明互补）。
+  - **本机代理成因（F-14，须知）**：`HTTP_PROXY` / `HTTPS_PROXY` 会让 Playwright 对 `http://127.0.0.1:<port>` 的就绪探测被代理劫持，表现为「服务已起但 E2E 全红」，极易被误诊成「TE 用例写少了」而去改用例。模板 `playwright.config.ts` 的 `webServer.env` 因此固定注入 `NO_PROXY: '127.0.0.1,localhost'` 并附成因注释；该文件属受门禁源码（期望角色 DE），TE 不得自行改写。
 - **接口测试（R14，开发窗口批次集成测试阶段必测，唯一权威定义）**：`full`（含 `single-task`，见下方「适用范围」关于 `single-task` 的说明）模式非 hotfix 迭代，**开发窗口的批次集成测试阶段**（每批次 QE 通过后对本批次做的集成测试，**非**最终整体集成测试阶段）**必须做接口测试**，且测试报告须含**非空**的「## 接口测试报告」章节（至少一条真实表格数据行）。机读判据 `batchApiReportPresent` 由 `workflow-gate-lib.mjs` 的 `checkBatchApiTestReport()` 扫描当前活跃 docs 子树 `test/` 目录下 `*.md` 计算；缺失或为空时 `batchTestComplete=false`，`gate-stop-workflow` 注入 R14 followup，**不得推进下一批次或最终整体集成测试**。R14 仅约束批次阶段，最终整体集成测试与 hotfix 折叠通道不并入此判据。
 - **接口测试适用性豁免（无对外接口项目）**：纯算法库、纯静态前端、无 HTTP/RPC/CLI 契约的组件等**无对外接口**项目，可豁免 R14 接口测试判据；判定遵循 §8.2「双要素豁免机制」表 R14 行（两项皆满足时 `isApiTestExempt()` 使 `batchApiReportPresent` 视为满足）。详见 `test-engineer.md`「接口测试适用性豁免」。
 - **业务数据存储对账（R17，开发窗口批次集成测试阶段机读硬门禁，唯一权威定义）**：`full`（含 `single-task`）模式非 hotfix 迭代，**开发窗口的批次集成测试阶段**须满足机读判据 `batchStorageReconPresent`（由 `checkBatchStorageReconciliationReport()` 计算；豁免时 `isStorageReconciliationExempt()` 视为满足）。未满足时 `batchTestComplete=false`，`gate-stop-workflow` 注入 R17 followup，**不得推进下一批次或最终整体集成测试**。R17 仅约束批次阶段，最终整体集成测试与 hotfix 折叠通道不并入此判据。机读要求：
@@ -147,7 +166,7 @@ Hook 解析 `## 进度列表` 时同时识别中文角色名与 `.claude/agents`
 - **R17 对账证据文件（适用行硬门禁）**：每个适用（非「不适用」）对账行的「对账方式」单元格须包含路径 `test-results/recon/<name>.json`（正则 `test-results/recon/[A-Za-z0-9._-]+\.json`）；该文件须存在于项目根下，且为合法 JSON，含非空字符串 `command`、`summary` 与有限数值 `exitCode`（建议含 `capturedAt`）。「不适用」行不要求证据文件。缺路径 / 缺文件 / 字段不全 → `checkBatchStorageReconciliationReport` 失败（reason 如 `missing-recon-evidence-path` / `missing-recon-evidence-file` / `recon-evidence-missing-command` 等）。证据文件由测试工程师在实际查验后落盘；与 E2E/lint 产物同属 `test-results/` 受控运行产物（§8.4），不触发 `gate-dev-workflow`。
 - **R17 门禁能力边界**：章节/表头存在性、分类型适用行、至少一条适用行、描述列非空、「其他」/「不适用」备注非空、存储介质类别关键词、批次任务包编号覆盖、适用行证据文件存在与字段完备为机读硬门禁；对账命令是否真正查到对应介质、预期/实际是否语义正确等，仍由 QE/PM 文字审查（§8.4），Hook 不声称已验证查验语义。
 - **约束后果**：批次 `gatePassed≠true` 时视为本批次集成测试未完成，**不得推进下一批次**；最终 `gatePassed≠true` 时**不得宣告项目完成**。
-- **适用范围**：适用于 `full` 模式下的 `greenfield` / `feature` / `governance-overhaul`、`single-task` 及 `hotfix` 迭代（`hotfix` 按 R11 折叠为单次通道，测试严格程度不降低）；`docs-only` 豁免；无 UI 项目按 §8.2「双要素豁免机制」表 E2E 行豁免（详见 `test-engineer.md`「E2E 适用性豁免」）。**`single-task` 说明（2026-07-30 随 R37 重构，唯一权威见 §8.8 R37 与 `workflow-modes.md`）**：`workflow_mode=single-task` 现为**增量迭代档**，测试按 **R37** 折叠为**单轮**集成测试 + E2E（进度行须含「最终整体集成测试」以便机读），不再要求批次 + 最终两条独立进度行。但折叠**只省轮次、不省判据**：该单轮仍须满足 E2E `gatePassed`、**R14 接口测试报告**、**R17 存储对账**（含适用行证据文件）与 **R32 生产启动冒烟**——这是与 `hotfix` R11 折叠通道的唯一差异（后者跳过 R14/R17，理由见 §8.2 R11 脚注）。进入折叠通道前须先通过 R37 前置校验（基线 `detail-design-spec.md` 存在 + `## 增量范围` 四维声明 + schema 变更禁用）。**不得**因为「这是 single-task」就自行再简化任何判据（R12）。
+- **适用范围**：适用于 `full` 模式下的 `greenfield` / `feature` / `governance-overhaul`、`single-task` 及 `hotfix` 迭代（`hotfix` 按 R11 折叠为单次通道，测试严格程度不降低）；`docs-only` 豁免；无 UI 项目按 §8.2「双要素豁免机制」表 E2E 行豁免（详见 `test-engineer.md`「E2E 适用性豁免」）。**`single-task` 说明（2026-07-30 随 R37 重构，唯一权威见 §8.8 R37 与 `workflow-modes.md`）**：`workflow_mode=single-task` 现为**增量迭代档**，测试按 **R37** 折叠为**单轮**集成测试 + E2E（进度行须含「最终整体集成测试」以便机读），不再要求批次 + 最终两条独立进度行。但折叠**只省轮次、不省判据**：该单轮仍须满足 E2E `gatePassed`、**R14 接口测试报告**、**R17 存储对账**（含适用行证据文件）与 **R32 生产启动冒烟**——这是与 `hotfix` R11 折叠通道的唯一差异（后者跳过 R14/R17，理由见 §8.2 R11 脚注）。进入折叠通道前须先通过 R37 前置校验（基线 `detail-design-spec.md` 存在 + `## 增量范围` **五维**声明 + 「需要迁移脚本 / 破坏向后兼容」为「是」时禁用本档，**F-08**）。另：走「数据形状变更＝是、迁移/破坏兼容＝否」这条 F-08 新开路径时，该单轮**额外**须落地兼容性回归用例的执行记录（`checkIncrementCompatRegressionReport`）——这是放松 schema 硬禁用换来的新增判据，缺记录即不得收尾。**不得**因为「这是 single-task」就自行再简化任何判据（R12）。
 - **未解释 skip / `coverage-waivers.json`**：见 `test-engineer.md`「`coverage-waivers.json`」一节。
 
 Hook 脚本路径：`.claude/hooks/`。修改 Hook 行为时须同步更新本节与 `README.md`。
@@ -170,10 +189,10 @@ Hook 脚本路径：`.claude/hooks/`。修改 Hook 行为时须同步更新本�
 **门禁能力边界（须知）**：
 
 - Hook 对**源码 / 构建产物 / 根目录敏感产物 / `.claude/scripts|agents|hooks/**` 三目录 / `docs` 下角色成果物（需求/设计/质量/测试/`process.md`）/ 受门禁 Shell 命令 / Agent 发起前的角色前置成果物（R13）**做确定性拦截。`.claude/hooks.json`、`.claude/harness.config.json` 不走 DE 源码门禁，但**已纳入 R29 门禁自治资产分级**（写入须人工批准，见 §8.5），不再仅由文字约束覆盖。
-- **R5 调用者身份（部分机械化）**：①顶层 vs 子代理——`subagentStart`（`gate-subagent-track`）记录顶层 `conversation_id`，`gate-dev-workflow` / `gate-dev-shell` 用 `isRootConversationCaller` 拒绝顶层亲自写受门禁路径或跑受门禁 Shell；②**R21** 角色↔路径——`gate-role-sequence` 在 Agent 放行时 `recordDispatchedRole`，写入期 `checkRolePathPermission` 校验路径期望角色与「进度正在执行 / 分派计划 / 待派发 / 最近派发」是否匹配：**产品源码**（`isGatedDevPath` 且非 `e2e/**`）收紧为须 DE 活跃，且**最近派发角色若为 TE/QE 等非 DE 则直接 deny**（不因进度表残留 DE 行而放行）；**R23**：**`e2e/**`** 纳入 `isGatedDevPath`，期望角色为 `test-engineer`（非 TE 含 DE 默认 deny），不走 DE 分派计划门禁；③**R22** TE 冒烟（替代启动）——最近派发为 `test-engineer` 时，`gate-dev-shell` 经 `checkTeAlternativeE2eStartup` 拒绝 `E2E_WEB_SERVER_COMMAND=` / `npx vite-node`+e2e 等替代启动（除非 `e2eAlternativeStartup:"allowed"` + 用户确认「允许非 dist 启动」双要素）。文字约束（R21/R22 语义补充，语义不可机械化）：TE 禁止改产品源码、禁止用替代启动掩盖生产冒烟失败；**R24**（纯文字约束，语义不可机械化）：TE 禁止为测绿随意改已生成用例（见 `test-engineer.md`）。**局限（坦诚披露）**：Cursor 当前子代理 hooks 无可靠 parent 回链，故无法用子代理 `conversation_id` 直接映射角色；首次 Agent 前或字段缺失时 identity 判据 fail-open（仍受分派计划等既有门禁约束）；「子代理是否越权写了分派范围外细节 / 用例变更是否真属用例缺陷」的语义部分仍靠文字 + §5.15 自检。**「冒烟是否真实执行」已由 R32 补为正向机读门禁**（§8.6）——本条曾把它列为纯文字约束，2026-07-29 复盘证明该缺口被实际踩中，按 R12 补齐实现；残留的语义部分（所用命令是否确为设计声明的生产路径）见 §8.6 能力边界。
+- **R5 调用者身份（部分机械化）**：①顶层 vs 子代理——`subagentStart`（`gate-subagent-track`）记录顶层 `conversation_id`，`gate-dev-workflow` / `gate-dev-shell` 用 `isRootConversationCaller` 拒绝顶层亲自写受门禁路径或跑受门禁 Shell；②**R21** 角色↔路径——`gate-role-sequence` 在 Agent 放行时 `recordDispatchedRole`，写入期 `checkRolePathPermission` 按**两级**判据裁决：**①调用者身份优先（F-01，2026-08-11 补齐）**——payload 的 `agent_type`（Claude Code 子代理上下文可用）能归一化为角色时即为**唯一**判据，与路径期望角色不符一律 deny（`caller-role-mismatch`）；**②** 仅在调用者身份不可判时，才退回校验路径期望角色与「进度正在执行 / 分派计划 / 待派发 / 最近派发」并集是否匹配。**为何必须分两级**：并集在流程中后期几乎覆盖全部 7 个角色（PM 会把待派发列表一次写满），只看并集等于「只要该角色在流程里出现过就能写任何成果物」——`requirement-reviewer` 可改写 `detail-design-spec.md`、`quality-engineer` 可改写 `process.md`，判据对文档成果物实际失效。两个通道同源：Shell 侧 `classifyShellWriteIntent` 的 targets 亦收 `isGatedDocArtifactPath`（**F-01**：历史只收源码类，`echo … > docs/design/detail-design-spec.md` 解析出空 targets，整条角色判据在 Shell 通道静默失效）。判据细节：**产品源码**（`isGatedDevPath` 且非 `e2e/**`）收紧为须 DE 活跃，且**最近派发角色若为 TE/QE 等非 DE 则直接 deny**（不因进度表残留 DE 行而放行）；**R23**：**`e2e/**`** 纳入 `isGatedDevPath`，期望角色为 `test-engineer`（非 TE 含 DE 默认 deny），不走 DE 分派计划门禁；③**R22** TE 冒烟（替代启动）——最近派发为 `test-engineer` 时，`gate-dev-shell` 经 `checkTeAlternativeE2eStartup` 拒绝 `E2E_WEB_SERVER_COMMAND=` / `npx vite-node`+e2e 等替代启动（除非 `e2eAlternativeStartup:"allowed"` + 用户确认「允许非 dist 启动」双要素）。文字约束（R21/R22 语义补充，语义不可机械化）：TE 禁止改产品源码、禁止用替代启动掩盖生产冒烟失败；**R24**（纯文字约束，语义不可机械化）：TE 禁止为测绿随意改已生成用例（见 `test-engineer.md`）。**局限（坦诚披露）**：Cursor 当前子代理 hooks 无可靠 parent 回链，故无法用子代理 `conversation_id` 直接映射角色；首次 Agent 前或字段缺失时 identity 判据 fail-open（仍受分派计划等既有门禁约束）；「子代理是否越权写了分派范围外细节 / 用例变更是否真属用例缺陷」的语义部分仍靠文字 + §5.15 自检。**「冒烟是否真实执行」已由 R32 补为正向机读门禁**（§8.6）——本条曾把它列为纯文字约束，2026-07-29 复盘证明该缺口被实际踩中，按 R12 补齐实现；残留的语义部分（所用命令是否确为设计声明的生产路径）见 §8.6 能力边界。
 - **批次 + 最终 E2E**（`batchE2ePassed` / `finalE2ePassed`）；**R15 lint**；**R16 静态扫描**；**R14 接口测试报告**；**R17 存储对账**（含适用行 `test-results/recon/*.json` 证据文件）；**R32 生产启动冒烟**（含强杀后重启段与结果新鲜度，§8.6）；**R33 界面与交互期望确认行**（§8.6）；**R18 设计审核**（含摘录最短长度、设计原文存在性、**设计落点 §N 章节窗口**、跨行去重）。**目标达成性 / 验收标准与摘录的深层语义对齐 / 对账查验语义 / 界面期望是否被忠实落地 / SRP 等**仍不可机械判定，由 RR/QE/PM 文字审查兜底。R18 设计落点/任务包交叉校验仍为弱匹配；摘录「是否与验收标准语义相关」仍靠人工核验——机读只证明文字真实、定位正确、不过度雷同。
 - **`test-results/` 受控运行产物例外**：E2E / lint / 静态扫描 / QE 留痕 / **R17 对账证据（`test-results/recon/*.json`）** / **R32 启动冒烟结果（`test-results/e2e/.startup-smoke-result.json`）** / Playwright trace 等由运行器或测试工程师进程内写盘，**不触发** `gate-dev-workflow`；`.gitignore` 已忽略 `test-results/`。
-- Shell 门禁为正则匹配，属「尽力而为」：可绕过手段无法穷尽拦截。**R28** 已把「写文件类命令」纳入与 Write 同等判据（见 §8.5），但仍不可穷尽；子 agent 不得主动利用（`CLAUDE.md` §5.16）。
+- Shell 门禁为正则匹配，属「尽力而为」：可绕过手段无法穷尽拦截。**R28** 已把「写文件类命令」纳入与 Write 同等判据（见 §8.5），且经 **F-26** 修正后主判据为「命令行提到受门禁路径即裁决」而非命令名枚举，但仍不可穷尽（如变量拼接路径、Base64 解码后写入）；子 agent 不得主动利用（`CLAUDE.md` §5.16）。
 - **hotfix 折叠通道下 R14/R17 无硬门禁的部分缓解**：见 `gate-chain.md` R9 脚注第 4 条（非阻塞软性提醒）。
 
 ### 8.5 审核加固项（R28–R31 与 R5/R6 加强）
@@ -193,7 +212,7 @@ Hook 脚本路径：`.claude/hooks/`。修改 Hook 行为时须同步更新本�
 
 | 分类 | 判定 | 裁决 |
 | ---- | ---- | ---- |
-| `targets` 非空 | 命令写入的目标可静态解析且命中受门禁路径 | 套用与 Write **完全相同**的判据：R5 顶层身份 → R5 角色↔路径 → （非 `e2e/**`）分派计划/R3/R9/阻塞 |
+| `targets` 非空 | 命令写入的目标可静态解析且命中受门禁路径——源码（`isGatedDevPath`）、**docs 文档成果物**（`isGatedDocArtifactPath`，**F-01** 补齐）、`process.md`、`harness-state.json`、`gated-artifacts.json` | 套用与 Write **完全相同**的判据：R5 顶层身份 → R5 角色↔路径（调用者身份优先，见 §上文 R5 两级判据）→ （非 `e2e/**`）分派计划/R3/R9/阻塞。通用前置（R10/docs-only/R3/阻塞）对 `e2e/**` 同样执行，仅 DE 专属前置按 e2e 跳过（**F-18/F-19**） |
 | `selfGoverned` 非空 | 目标为门禁自治资产 | 按 R29 分级（`deny` / `ask`） |
 | `opaqueWrite` | 内联解释器（`node -e`/`python -c`…）含写文件语义但目标不可解析 | `deny`，要求改用 Write 类工具以便门禁裁决 |
 | `opaqueWorktree` | `git apply` / `reset --hard` / `stash pop` 等可任意改写工作树 | `ask`（交人类判断） |
@@ -203,10 +222,37 @@ Hook 脚本路径：`.claude/hooks/`。修改 Hook 行为时须同步更新本�
 不声称不可绕过。框架自带运行器（`e2e-run` / `lint-run` / `static-scan-run` / `qe-run` /
 `bootstrap-docs` / `gate-*`）显式豁免，避免自锁。
 
+**从「枚举命令名」到「路径出现即裁决」（F-26 修正，2026-08-11）**：上表第一列的前提是
+「写入意图已被识别」，而历史 `SHELL_MUTATION_RE` 是一张**命令名黑名单**——只枚举了
+`sed -i` 一类。同类工具换个名字即整条判据失效，实测 ALLOW：`perl -pi -e`、`yq -i`、
+`dasel -i`、`npx json -I -f`、`npx replace-in-file`、`ex -sc wq`、`npm pkg set`、`npm version`。
+其中 `npx json -I -f docs/design/gated-artifacts.json` 可**单方面**取得 R22 双要素之一
+（该文件 Write 通道期望角色为 `system-architect`），危害等同直接改写门禁强度。
+
+修正分三层，方向是把判据从「用了哪个工具」倒转为「哪个文件可能被改」：
+
+| 层 | 判据 | 说明 |
+| -- | ---- | ---- |
+| 命令名（保留） | `SHELL_MUTATION_RE` 补入上述已知同类命令 | 只负责抬高成本；枚举法不可穷尽，本层**不是**兜底 |
+| **路径敏感兜底（新增）** | 命令行参数里出现受门禁路径 / 门禁自治资产 ⇒ 一律按「可能改写」进入裁决，**不再要求先命中命令名** | 真正的兜底层。未来出现的新工具无需登记即被覆盖 |
+| 只读白名单 | `cat` / `type` / `head` / `tail` / `grep` / `rg` / `find` / `ls` / `wc` / `diff` / `stat` / `jq` / `node --check` / `git diff\|log\|show\|status\|blame\|ls-files` 等 | 避免把「看一眼受门禁文件」也拦成写入 |
+
+隐含目标另行补出：`npm pkg set` / `npm version` 的目标是 `package.json`、
+`npm|yarn|pnpm config set` 的目标是 `.npmrc`，二者都不出现在命令行里，若不补就会落进
+「`mutates` 为真但 `targets` 为空」的缝里被放行。回归见 `r28-r31-hardening.mjs`「F-26」11 例
+（8 条绕过链 + gated-artifacts.json 专项 + 只读命令与正常构建/运行器两条反向断言）。
+
+**豁免只覆盖「调用」，不覆盖「改写」（F-21 同源修正）**：历史实现仅匹配命令中是否**出现**
+运行器路径，于是 `Set-Content .claude/scripts/lint-run.mjs -Value x` 命中豁免并在 R29 归类
+**之前**早退——同一改写走 Write 通道被 deny、走 Shell 通道 100% 放行，正是本节要消除的
+双通道判据不一致。现要求运行器路径前必须是解释器/包管理器调用形式（`node` / `npx` /
+`bun` / `deno` / `npm` / `pnpm` / `yarn`）；`Set-Content` / `echo >` / `cp` / `rm` 等改写或删除
+运行器的命令一律落回 R29 `gate-code`（deny）。回归见 `r28-r31-hardening.mjs`「R28 加强（F-21）」两例。
+
 #### R29：门禁自治资产
 
 **问题**：`hooks.json`、`harness.config.json` 与三个运行时标记原先全在
-`dotCursorExemptPatterns` 中，等于「被约束方可自由改写约束自身」。实测一步可达：
+`dotClaudeExemptPatterns` 中，等于「被约束方可自由改写约束自身」。实测一步可达：
 伪造 `.dispatched-roles.json` 即获任意角色身份（deny → allow）；自写
 `.toolchain-install-approved.json` 即自签安装授权（ask → allow）且**一份凭证泛用于任意
 安装命令**；把 `qe.commands.lint` 设为 `exit 0` 即令 R15 空转（`gatePassed=true`）；
@@ -215,8 +261,9 @@ Hook 脚本路径：`.claude/hooks/`。修改 Hook 行为时须同步更新本�
 | 分级 | 路径 | 裁决 | 理由与解法 |
 | ---- | ---- | ---- | ---- |
 | `runtime-marker` | `.claude/hooks/.root-conversation-id.json`、`.claude/hooks/.dispatched-roles.json` | **deny** | 只应由 Hook 进程自身落盘；代理写入即等于自签身份。解法：走正常 Agent 派发让 Hook 自行落盘 |
-| `approval-marker` | `.claude/hooks/.toolchain-install-approved.json` | **deny** | 代表「用户已批准」，代理写入即自签授权。解法：直接执行安装命令，由 `gate-toolchain-install` 在 `beforeShellExecution` 上 `ask` 请用户批准；如需批量预授权，由**用户本人**创建该凭证 |
-| `gate-config` | `.claude/hooks.json`、`.claude/harness.config.json`、`CLAUDE.md`、`.claude/harness/spec/**.md` | **deny** | 门禁强度旋钮与权威文本；「是否放宽门禁」不能由被约束方自行决定。解法：代理呈现 diff/理由，由**用户本人**编辑 |
+| `approval-marker` | `.claude/hooks/.toolchain-install-approved.json` | **deny** | 代表「用户已批准」，代理写入即自签授权。解法：直接执行安装命令，由 `gate-toolchain-install` 在 `PreToolUse`（`Bash|PowerShell`）上 `ask` 请用户批准；如需批量预授权，由**用户本人**创建该凭证 |
+| `gate-config` | `.claude/settings.json`、`.claude/settings.local.json`（Claude Code 的 Hook 注册表）、`.claude/hooks.json`（历史路径，R12 保留）、`.claude/harness.config.json`、`CLAUDE.md`、`.claude/harness/spec/**.md` | **deny** | 门禁强度旋钮与权威文本；「是否放宽门禁」不能由被约束方自行决定。摘掉 `settings.json` 里任一条 Hook 注册即令对应门禁整体消失，强度高于任何 config 旋钮。解法：代理呈现 diff/理由，由**用户本人**编辑 |
+| `gate-code` | `.claude/hooks/*.mjs`、`.claude/hooks/lib/**`、`.claude/scripts/{*-run*,*-lib,gate-*,exec-proof*,tool-availability*,startup-smoke*}.mjs`、`.claude/agents/*.md`、`.claude/scripts/tests/**` | **deny** | **F-21 补齐**：历史清单只锁配置文本，于是门禁**代码**、机读证据**运行器**、角色**强制约束**三类只受「角色↔路径」约束——而 §5.1 明文把 harness 基建授权给 DE。合起来即：DE 在合法分派下改写 `lint-run.mjs` 让它恒写 `gatePassed: true`，产物随后由**真实**私钥签名、R34 验签通过，stop 门禁收下一份「合法签名背书的假结果」。锁配置而不锁代码等于给 R12 留后门。解法同 `gate-config`：呈现完整 diff + 理由，由**用户本人**落盘；即使是加强方向亦然 |
 | 角色门禁 | `.claude/harness-state.json` | 期望 `project-manager` | 它决定所有门禁读哪一份 `process.md`；保留 PM bootstrap 窗口 |
 | 角色门禁 | `docs/[{feature}/]design/gated-artifacts.json` | 期望 `system-architect` | **2026-07-29 审核补齐**：它是 `harness.config.json` 的 merge 另一半（`extra*` 收紧项、各 `{gate}Applicability` 豁免第一要素、`productionStartupCommand`）。历史实现把它整体排除在门禁外（`isGatedDevPath` 直接 return false 且不在角色成果物判据内），等于**任何角色、任何阶段都能改写门禁强度**——R29 锁死了 `harness.config.json` 却放开了它。现纳入角色门禁（`isGatedArtifactsConfigPath`），Write 与 Shell（R28 `targets`）两通道同判；仍不走 DE 分派计划/R3/R9，避免 SA 在开发前产出它时死锁 |
 
@@ -227,12 +274,13 @@ Hook 脚本路径：`.claude/hooks/`。修改 Hook 行为时须同步更新本�
 代码扩展名门禁对整个 `src/` 失效，属「被约束方自行放宽约束」。确需新增扩展名豁免目录时，
 改 `harness.config.json → gatedPaths.extensionGateExemptDirs`（R29 锁定，须**用户本人**编辑）。
 
-**为什么一律 `deny` 而不是 `ask`（重要，勿回改）**：Cursor 官方 Hooks 文档明确写明
-`preToolUse` 的 `permission: "ask"` 是「accepted by the schema but **not enforced** for
-`preToolUse` today」——即写文件通道上返回 `ask` **不会**弹出用户批准，实际行为未定义。
-若在此处依赖 `ask`，保护会**静默退化**，正是本次审核要消除的失效模式。`beforeShellExecution`
-通道确实支持 `ask`（`gate-toolchain-install` 即用它），但 R29 在 Shell 通道也刻意用 `deny`：
-否则「Write 被拒 → 改用 Shell → 用户顺手点批准」会成为标准绕过路径，与 `CLAUDE.md` §5.16 冲突。
+**为什么一律 `deny` 而不是 `ask`（重要，勿回改）**：Claude Code 的 `PreToolUse` 确实支持
+`permissionDecision: "ask"`，但 `ask` 在 **auto 权限模式**下会被自动批准——`permission_mode: 'auto'`
+正是为「免打断」而设，于是「须用户确认」的保护会**静默退化**为放行，正是本次审核要消除的失效模式
+（这也是 `permission-mode-guard.mjs` 把 critical/high 的 `ask` 一律升级为 `deny` 的原因，见 R1 加固）。
+Shell 通道同理刻意用 `deny`：否则「Write 被拒 → 改用 Shell → 用户顺手点批准」会成为标准绕过路径，
+与 `CLAUDE.md` §5.16 冲突。唯一保留 `ask` 的是 `gate-toolchain-install`——它本就以「请用户批准安装」
+为语义，且凭证须带 `commandHash` 二次校验。
 
 **工具链授权加强**：`commandHash` 由「可选」改为**必需**，且须 `userConfirmed: true` 与
 有效时间戳（`expiresAt` 或 `approvedAt`）。历史行为下一份无 `commandHash` 的凭证可放行
@@ -259,6 +307,54 @@ UTF-8 BOM、UTF-16LE/BE BOM，并按「0x00 字节的奇偶优势比」探测无
 `parseProcessFrontmatter` 另行防御性剥离前导 BOM。探测**不得**要求「另一侧严格为 0」：
 中日韩文本中 U+xx00 形式的字符（如「一」U+4E00）会在另一侧贡献 0x00，严格判据会整份漏判。
 
+**R30 加强（F-10）：表格单元格内竖线的机读契约**
+
+**问题**：编码之外，机读格式还有第二个静默失配面——**GFM 表格单元格内的竖线必须转义为
+`\|`**（需求描述里写枚举 `status=all\|active\|done` 是唯一正确写法），而历史判据一律裸
+`line.split('|')`：转义竖线被当作列分隔符，该行列数变多、**后续列整体右移**。实测后果：
+`parseRequirementP0Ids` 从 `cells[4]` 取优先级时取到 `"done"`，`/^P0$/i` 失配 → 一条如实
+标注 P0 的需求**静默**退出 E2E 必测集合，`gatePassed: true`、签名有效、零提示；R18 P0 覆盖
+矩阵、R14 接口测试映射、`## 增量范围` 五维声明、`## 当前分派计划` / `## 待派发角色列表` /
+`## 回退计数` / `## 用户确认记录` 同属受影响面。触发方式毫不刻意，且规约原先全篇未声明
+单元格内竖线该怎么写。
+
+**判据**：
+1. **书写侧契约**：表格单元格内的竖线**须**转义为 `\|`（GFM 规范要求）；成果物模板与
+   角色文件按此书写，判据**须**能正确还原为字面量 `|`。
+2. **判定侧唯一切分器**：所有表格判据统一走 `core.mjs#splitTableRow`（配套
+   `isTableSeparatorLine`）——按「未被反斜杠转义的 `|`」切分，再把 `\|` 还原为 `|`，
+   并去掉首尾空壳列；禁止新增裸 `split('|')` 表格解析。运行器侧 `e2e-run-lib.mjs`
+   刻意不依赖 `hooks/lib/**`，故同语义各留一份，**两处口径必须一致**，改一处须同步另一处。
+3. **回归**：`tests/selftest/r30-table-escape.mjs` 锁定切分器、`parseRequirementP0Ids`、
+   `parseMarkdownTables`、`collectActiveRoleSlugs`、`sectionHasDataRow` 五条链路；
+   连续转义 `\|\|` 与行尾转义同样覆盖。
+
+**章节聚合（F-11）：同名 / 多轮章节只取第一节**
+
+`extractSection` 历史实现返回**首个**匹配章节即止。在多轮迭代下，成果物里常见
+`## 需求覆盖矩阵` 与 `## 第二轮需求覆盖矩阵` 并存（或同名章节追加两次），于是**新轮次的表格
+整段不入判据视野**——R18 的 12 维充分性、P0 覆盖矩阵、`sectionHasDataRow` 全部只看第一节，
+第 2 轮起等于自动沿用第一轮的审核充分性。修复：新增 `extractSectionAll`（返回全部匹配节），
+`extractSection` 改为**聚合全部同名节**（以空行分隔，避免后一节表头被并入前一节表格）；
+标题行余下文字（如「（须逐项列出）」）仍不计入正文，故「缺章节 / 空章节」判据不变——
+只把更多内容纳入判据，属加强。回归见 `tests/selftest/f09-f11-f17-round.mjs`。
+
+**规范写法（R18 侧的配套约束）**：聚合解决的是「新轮次的表整段消失」，但它按**并集**判定
+——第 2 轮若另起一节只写两三个维度，12 维充分性会被第 1 轮的维度行补齐。故多轮审核的规范写法是
+**合并进同一张表并在「审核轮次」列标注轮次**，而非每轮另起章节；该义务写在
+`.claude/agents/requirement-reviewer.md`「多轮迭代」一节（角色执行面），此处仅说明判据成因。
+「本轮维度是否齐全」属语义充分性，与「摘录是否与验收标准相关」同类——落在
+§8.4 的能力边界内，由 `requirement-reviewer` 如实执行。
+
+**成果物与确认的轮次时效性（F-09 / F-17）**
+
+`hotfix` / `single-task` 沿用同一份 `process.md` 与同一份 `design-problem-list.md`，而这些
+都是单表累积结构。历史判据只问「表里有没有一行合规行」，不问「那一行是不是本轮的」：
+第 2 轮起，上一轮的 R20 模式确认行与上一轮的 R18 审核结论行**直接为本轮背书**。修复引入
+frontmatter `iterationRound`（缺省 1）：`≥ 2` 时，R20 确认行与 `## 审核结论` 最新行都须
+自带本轮轮次标识，否则分别 fail-safe 回 `full` 与拒绝进入开发。唯一权威定义与判据表见
+`workflow-modes.md`「`iterationRound`（轮次时效性）」；单轮项目判据与历史逐字一致。
+
 #### R31：回退计数上限机械化
 
 **问题**：`rollback.md` 声称开发回退由「stop Hook 与 `## 回退计数` 双重约束」，但
@@ -277,11 +373,11 @@ UTF-8 BOM、UTF-16LE/BE BOM，并按「0x00 字节的奇偶优势比」探测无
 
 **判据**：区分两个谓词——「可被覆盖（stale，无时间戳或超 TTL）」用于**自愈**决策；
 「已确定过期（expired，有合法时间戳且超 TTL）」用于**身份判定**决策。TTL 内不覆盖（保留防嵌套语义），
-超 TTL 由新会话首个 `subagentStart` 覆盖。降级态不再静默：`inspectIdentityBaseline` 判定为
+超 TTL 由新会话首个 `SubagentStart` 覆盖。降级态不再静默：`inspectIdentityBaseline` 判定为
 `baseline-missing` / `baseline-expired` 时写 stderr 告警并在 `process.md` 留一次性
 **非阻塞**提醒（`recordIdentityBaselineNotice`，幂等、cancelled 流程不写）。
 
-**保留的 fail-open**：基准缺失时仍放行（避免 `subagentStart` 不可用导致硬死锁），
+**保留的 fail-open**：基准缺失时仍放行（避免 `SubagentStart` 不可用导致硬死锁），
 但已从「静默」变为「有告警 + 有留痕」。
 
 #### R6 加强：代码扩展名默认受门禁
@@ -363,6 +459,21 @@ Gradle、CMake、Elixir、Flutter、Swift 等纳管。两层口径不一致的�
 | **决策** | 经用户于 2026-08-03 明确确认后采用上述四条默认命令；备选的「一律不补默认、维持红灯」被否决——它会把这些栈推向整体豁免，与 R16 那次「不可达门禁终被摘除」的判例同理 |
 | **后续禁止事项** | 不得以本条为先例，给「可能空转」的命令配默认（尤禁 `gradle check`、`make lint`、`exit 0` 类）；不得把「框架无默认命令」当作 `lintApplicability:"n/a"` 的理由；新增默认命令须同时说明「未配置时是否会静默通过」，无法说明的一律留空 |
 
+##### 门禁强度调整留痕（R37 增量范围 schema 维拆分，F-08，2026-08-11）
+
+`SPEC_REVIEW_V2.md` F-08 / 建议 #18 指出：R37 的 schema 维是一刀切硬禁用，
+不区分「加一个向后兼容的可选字段」与「重命名主键、拆表、改类型」。按 R12 反向情形条款留痕。
+
+| 项 | 内容 |
+| -- | ---- |
+| **放松了什么** | 「## 增量范围」原单一 `schema` 维（填「是」即禁用增量档）拆为「数据形状变更」+「需要迁移脚本 / 破坏向后兼容」两维，**仅后者**填「是」时硬禁用。原被一律拒绝的「形状变、兼容未破」类增量现可走 `single-task`，能通过的项目集合扩大，性质上属放松 |
+| **声明层是否变化** | **有**。`workflow-modes.md` 迭代分诊表「修改数据模型 / schema / 新增迁移 ⇒ 禁止 `single-task`」细化为按兼容性分档；R20 固定选项文案、四维→五维表述、`templates/process.md` 同步变更。故与 R16 那次「实现回到既有声明」不同，本次声明与实现同时变更 |
+| **为何需要用户确认** | R12 只单向授权「文档强于实现 ⇒ 补实现」，本方向不被自动授权。且 `EVIDENCE_LOG.md` F-08 自己写明「规约既未定义『非破坏性字段新增』这一豁免，被约束方就不得自行论证『我这个 schema 变更很小所以不算』——那正是 R12 要防的放松」，故须由用户裁定而非代理自行改回 |
+| **证据** | ① `SPEC_REVIEW_V2.md` F-08、建议 #18；② `EVIDENCE_LOG.md` F-08 实测：用户原话「就加个字段，别动数据库结构那些」被 `increment-scope-schema-change` 拒并要求改走 `full`；③ 加字段是最常见的增量形态，一刀切使增量档适用面被压到「纯 UI 微调 / 纯行为调整 / 纯读取侧变更」，与 R37 引入增量档的初衷（「已有设计的项目加个小功能没有任何可用路径」）直接冲突 |
+| **换取的新增判据（非纯放松）** | 「形状变、兼容未破」路径须①在两维说明列声明**兼容性回归用例**（`increment-scope-missing-compat-regression`）；②在折叠通道唯一测试轮次落地该用例执行记录（`checkIncrementCompatRegressionReport`，进入 `finalTestComplete`）。缺任一条即拒绝，等价于旧的硬禁用——放松的是「哪类变更可用增量档」，不是「验证可以少做」 |
+| **决策** | 经用户于 2026-08-11 明确确认（「剩下两项按照审查报告中提到的建议进行修复」）后按建议 #18 实施。备选的「维持一刀切」被否决——它使增量档在最常见的增量形态上永久不可用，与 R16 那次「不可达门禁终被摘除」同理 |
+| **后续禁止事项** | 不得由任何代理判定「我这个变更算兼容」——「是否需要迁移 / 是否破坏兼容」是一次如实声明，声明「否」却实际提交迁移脚本按**虚假声明**处理（复盘清单 B13）；不得以本条为先例把其它硬禁用改为「按性质分档」；兼容性回归用例缺失时**不得**走双要素豁免绕过，只能改走 `full` |
+
 ### 8.6 交付可用性与体验验收（R32–R33）
 
 本节对应 **2026-07-29 启动报错与界面不符复盘**。两条规则针对同一类系统性盲区：
@@ -422,7 +533,8 @@ Gradle、CMake、Elixir、Flutter、Swift 等纳管。两层口径不一致的�
 | **罗盘第 7 维** | `requirements-analyst.md` §1.3 新增「交互与界面期望」；§1.3.1 规定必聊条件：greenfield / 引入新交互面 / 目标点名竞品或参照物 / 用户表达过任何外观偏好 |
 | **对标钉死** | 目标含「类似 XX」时须用苏格拉底「对标钉死」手法拆成功能像 / 流程像 / 外观像并逐项取得表态；禁止用竞品默认、组件库默认或「留给设计阶段」代替用户确认 |
 | **需求文档落点** | `requirement-spec.md`「3.4 界面与交互期望」（对标参照 / 布局与关键工作区 / 导航与信息架构 / 信息密度与视觉风格 / 参考图或可验收描述 / 非目标 + §7 追溯）；界面类假设/边界/取舍同时并入 §6（R19）；可验收的界面期望须在 `requirement-list.md` 立编号与验收标准 |
-| **机读判据** | `checkUiExpectationConfirmed`（`hasUiExpectationConfirmation`）：`process.md`「## 用户确认记录」须有一行同时命中界面类词（界面/UI/交互/视觉/外观/布局）与表态词（期望/对标/参考/风格/导航/信息架构/默认/不适用/无 UI/确认/接受）。并入 `checkRequirementReady()`，**缺失时 `gate-role-sequence` 拒绝发起 `system-architect`** |
+| **机读判据** | `checkUiExpectationConfirmed`（`hasUiExpectationConfirmation`）：`process.md`「## 用户确认记录」须有一行**按列**满足两侧条件——「确认项」列命中界面类词（界面/UI/交互/视觉/外观/布局），**且**摘要列命中表态词（期望/对标/参考/风格/导航/信息架构/默认/不适用/无 UI/确认/接受）**且**摘要去标点后 ≥ 4 字。并入 `checkRequirementReady()`，**缺失时 `gate-role-sequence` 拒绝发起 `system-architect`** |
+| **按列判定（F-28，2026-08-11 加强）** | 历史实现对**整行**同时测两个正则，而 `布局` / `默认` 同属两个词表，于是 `\| 备注 \| … \| UI 布局稍后再定 \|`——一行明说「还没定」的无关备注——反而满足判据；摘要留空的 `\| 界面与交互期望 \| … \|  \|` 同样过关。现两列各管一段：确认项列决定「这一行**是**界面维度的确认」，摘要列决定「用户**真表了态**」，彼此不能顶替。回归：`selftest/r33-ui-expectation.mjs` F-28 三例 |
 | **两种合规形态** | ①有期望：写明对标/布局/导航等；②明确无独立期望：「接受组件库默认外观」，或无 UI 项目「本项目为 CLI/纯后端，界面期望不适用」。**技术选型确认行不能顶替** |
 | **豁免** | 与 R19 同——**不适用**双要素豁免机制。「本次无界面期望」本身就是一种须留痕的用户表态，属澄清充分性的一部分，而非「确不适用/无法运行」的技术性豁免场景 |
 | **下游消费** | SA 将 §3.4 作为设计输入（`system-architect.md` 输入第 1 条）；RR「体验」维以 §3.4 为审核基线（`requirement-reviewer.md`） |
@@ -456,13 +568,14 @@ RR「体验」维人工审核，以及界面期望立编号后的 E2E 追溯共�
 | - | ---- | ------------ | -------------- | ---- |
 | 1 | **用户确认是自述** | 校验 `## 用户确认记录` 中确认行的**结构性存在**与关键词匹配（`hasLiteModeConfirmation` / `hasUiExpectationConfirmation` / 各 `is*Exempt`） | **无法验证 AskUserQuestion 真的问过用户**。确认行由 PM（被约束方）书写，双要素豁免的两个要素（`gated-artifacts.json` 与 `process.md`）**同样都由 AI 写** | 角色文件的 AskUserQuestion 义务（R20/R26/R27/R33）；复盘 skill 抽查确认行与实际对话是否对得上 |
 | 2 | **证据产物的执行证明可被绕过（**R34 后已大幅收紧，但仍非安全边界**）** | **R34**：产物须带 Hook 签发 nonce + ed25519 签名，签名覆盖除 `execProof` 外的全部字段；台账与私钥交接目录纳入 R29 禁写。手写 `{"gatePassed":true}`、落签后改字段、Hook 通道外运行、nonce 伪造/错配、私钥未被消费——六类形态均被识破。**二轮修正**：再加新鲜度判据（`checkArtifactFreshness`），产物时间戳须晚于最后一次源码变更 | **私钥交接文件在被运行器消费前对代理是可读的**。伪造需要：抢在运行器消费前读到私钥、自行完成规范化序列化与 ed25519 签名。新鲜度建立在文件 mtime 上，代理有能力改 mtime。成本已从「改一个 JSON 字段」抬到多步刻意构造，但**不是**密码学安全边界 | 该多步链路在会话记录里清晰可见；QE/PM 核验时应关注 `execProof.reason`；改 mtime 须走 Shell，由 R28 部分兜底；伪造执行证明视同伪造测试结论，与直接改写门禁同级 |
-| 3 | **stop 门禁有次数预算** | 流程未闭环时注入 `followup_message`（§8.2 判据表） | `gate-stop-workflow` **从不 deny**，只能提醒；`hooks.json` 的 `loop_limit`（本框架设为 3）限定同一 stop hook 自动追加 followup 的次数，用尽后代理**可以**在流程未完成时正常结束回合 | `CLAUDE.md` §5.15 回合结束前自检——预算耗尽后它是**唯一**还在起作用的约束，故不得以「Hook 会拦」为由省略 |
+| 3 | **stop 门禁有次数预算** | 流程未闭环时注入 `followup_message`（§8.2 判据表） | `gate-stop-workflow` **从不 deny**，只能提醒；stop hook 自动追加 followup 的次数由引擎的 stop 循环预算（本框架按 3 轮设计）限定，用尽后代理**可以**在流程未完成时正常结束回合 | `CLAUDE.md` §5.15 回合结束前自检——预算耗尽后它是**唯一**还在起作用的约束，故不得以「Hook 会拦」为由省略 |
 | 4 | **阻塞释放阀（**R35 后已收紧**）** | **R35**：`blocking: true` 不再无条件释放 stop 门禁，须有机器起源依据或「实质阻塞原因 + 用户决策留痕」双证据。**二轮修正**：机器起源分支须与 Hook 独占写入的旁路台账对上指纹，且每条只能释放一次 | 与边界 1 同源：**人类起源**的两项证据仍由 PM（被约束方）书写，机读只证明「阻塞被写清楚了、并声称问过用户」，**不证明真的问过** | 与边界 1 相同的兜底；复盘 skill 抽查阻塞决策留痕与实际对话是否对得上 |
 | 5 | **判定期异常的修复通道例外（**R36 的刻意残留**）** | **R36**：判定期异常由 fail-open 改为 fail-closed（write/shell/task → deny，toolchain → ask，stop → followup）。**二轮修正**：修复例外只在「整次调用就是对活跃 `process.md` 的直接写入」时给（`resolveGateRepairPaths`），夹带任何其他路径一律 deny | 单独写活跃 `process.md` 在异常时仍放行。理论上「先制造判定期异常、再借该例外写 process.md」可绕过 R5 角色↔路径对 `process.md` 的约束——但已**不能**借它写入 process.md 以外的任何路径 | 该例外必然伴随 `## 门禁异常事件` 落盘与 `blocking: true`（对用户可见）；关闭它会造成代理无法自愈的死局，故取舍为「可见的窄例外」优于「不可修复的死锁」 |
 
-**补充：`preToolUse` 的覆盖面**。`hooks.json` 的写文件 matcher 为
-`Write|StrReplace|ApplyPatch|Delete|EditNotebook`。此列表之外的写入通道（MCP 工具的写操作、
-未来新增的写文件工具等）**不经 `gate-dev-workflow`**；Shell 通道由 R28 部分兜底（§8.5），
+**补充：`PreToolUse` 的覆盖面**。`.claude/settings.json` 的写文件 matcher 为
+`Write|Edit|NotebookEdit`（入口脚本已解析 `file_path` / `path` / `target_file` /
+`notebook_path` / `target_notebook` 五个字段）。此列表之外的写入通道（MCP 工具的写操作、
+未来新增的写文件工具等）**不经 `gate-dev-workflow-enhanced`**；Shell 通道由 R28 部分兜底（§8.5），
 但同样是正则「尽力而为」。新增写入通道时须同步扩充 matcher，否则等于开了一条无门禁旁路。
 
 **推论（给规约维护者）**：由于以上各点，**「加一条机械门禁」并不等于「该风险已消除」**。
@@ -490,7 +603,7 @@ Hook 端到端见 `.claude/scripts/tests/scenarios/audit-fixes.mjs`（AF1–AF14
 
 | 步骤 | 执行者 | 内容 |
 | ---- | ------ | ---- |
-| **签发** | `gate-dev-shell`（`beforeShellExecution`） | 识别本次命令为框架运行器时生成 ed25519 密钥对：**公钥**写入台账 `.claude/hooks/.exec-proof-ledger.json`，**私钥**写入交接文件 `.claude/hooks/.exec-proof-pending/<nonce>.json` |
+| **签发** | `gate-dev-shell`（`PreToolUse` / `Bash\|PowerShell`） | 识别本次命令为框架运行器时生成 ed25519 密钥对：**公钥**写入台账 `.claude/hooks/.exec-proof-ledger.json`，**私钥**写入交接文件 `.claude/hooks/.exec-proof-pending/<nonce>.json` |
 | **落签** | 运行器（`*-run.mjs`） | 写产物**之前**调用 `attachExecutionProof()`：领取并**立即删除**交接文件（私钥单次使用），对「产物去掉 `execProof` 后的规范化 JSON + kind + nonce」签名，写入 `execProof: { kind, algo, nonce, signature, signedAt }` |
 | **验签** | 门禁（`evaluateGateArtifact`） | 用台账公钥验签，并要求交接文件**已被消费**（仍存在 ⇒ 私钥未被运行器取走 ⇒ 该 nonce 作废） |
 | **验新鲜度** | 门禁（`checkArtifactFreshness`） | 产物 `capturedAt`/`executedAt` 须不早于最后一次源码变更（`latestSourceChangeMs`，容差 2 秒） |
@@ -555,7 +668,8 @@ Hook 端到端见 `.claude/scripts/tests/scenarios/audit-fixes.mjs`（AF1–AF14
 2. **人类起源**：`## 阻塞原因` 有**实质内容**（`hasSubstantiveBlockingReason`：排除引用块与
    「无 / — / - / 待补 / TBD / （占位）」，去标点后 ≥ 4 字）**且** `## 用户确认记录` 有一行阻塞决策留痕
    （`hasBlockingDecisionTrace`：行内同时含阻塞类主题「阻塞/待决/暂停/挂起/决策」与
-   「问过用户」的表态「AskUserQuestion/用户/确认/决策/答复/裁决」）。
+   「问过用户」的表态「AskUserQuestion/用户/确认/决策/答复/裁决」；`AskQuestion`（Cursor 时代
+   工具名）亦保留为可接受形态，供从 Cursor 版迁移的接入方仓库沿用）。
 
 不满足时 stop **不放行**，注入 followup 要求补齐证据或把 `blocking` 改回 `false`。
 `blocking` 对**派发**的阻断语义不变（`checkRoleDispatchGate` 仍拒绝派发），故补齐证据的唯一执行者是
@@ -565,6 +679,21 @@ PM 写 `process.md`——该写入正常放行，不构成死锁；`loop_limit: 
 `/## 阻塞原因\s*\n+无\s*(?=\n## |\n*$)/` **匹配不上出厂模板**（「无」后紧跟两行 `>` 使用说明），
 导致 fail-open 时只置了 `blocking: true` 却没写阻塞原因——与本判据配合会出现
 「门禁自己写的阻塞过不了门禁自己的证据校验」这种自相矛盾。回归：`r35-blocking-evidence.mjs`。
+
+**工具名漂移修复（2026-08-13，`hasBlockingDecisionTrace` 接受 `AskUserQuestion`）**
+
+`stanceRe` 历史上只认 Cursor 时代的 `askquestion`，但**它不是 `AskUserQuestion` 的子串**
+（`AskUser` + `Question`）。而本节声明层与全部角色文案要求的确认工具正是 `AskUserQuestion`，
+于是出现「按规约照做、留痕反而不被承认」：纯英文留痕行
+`| blocking decision | … | AskUserQuestion: … |` 被判为「没问过用户」，stop 门禁不放行。
+中文项目因 `用户`/`确认`/`决策` 兜底而未暴露，故长期潜伏。
+
+| 项 | 内容 |
+| -- | ---- |
+| **是否属放松** | **否**。§8.8 R35 判据 2 的声明层**一直**把 `AskUserQuestion` 列为可接受表态，实现却不认——属 R12「文档声明强于实现 ⇒ 补齐实现」的**自动授权**方向，不适用反向情形条款，无需按「门禁强度调整留痕」走用户裁定 |
+| **改了什么** | `stanceRe` 增列 `askuserquestion`；保留 `askquestion`（从 Cursor 版迁移的接入方仓库里已有该形态，撤销既有可接受形态才是放松）。声明层同步补注「`AskQuestion` 亦保留」，使文档与实现一致 |
+| **判据强度是否下降** | 否。`topicRe`（阻塞类主题）与「须两者同时命中」的结构未动；新增的只是**规约自己要求的那个工具名**。上文「没问过用户」的反例（`postponed to the next sprint`）仍为 `false` |
+| **回归与判别力** | `r35-blocking-evidence.mjs` 新增三例（英文 `AskUserQuestion` 认可 / 同形态无表态仍拒 / 旧 `AskQuestion` 不被反向打破）。三例**刻意全英文**：去掉 `askuserquestion` 后第一例立即转红（中文备选不会替它兜底），已做反事实对照确认有判别力 |
 
 **机器起源的出处校验（2026-07-30 复核补入）**
 
@@ -582,6 +711,28 @@ PM 写 `process.md`——该写入正常放行，不构成死锁；`loop_limit: 
   `releasedAt`。否则一条真实发生过的历史异常可以被反复抄回表格，变成永久免死金牌。
 - **不构成死锁**：`gate-stop-workflow` 的 R36 fail-closed 分支每次都会记一条**新**事件，
   故「门禁反复抛异常」时每轮都有新的可用条目；台账写失败只是退回人类起源双证据（收紧方向）。
+
+**反向对账：台账 → 表格行（F-22，2026-08-12 v2 评审补入）**
+
+上面三条都是「表格行 → 台账」正向校验：防的是**凭空补一行**。反向的窟窿一直敞着——
+把 `## 门禁异常事件` 里的行**整段删掉**、只留 `blocking: true`，正向校验无从触发，而 stop 门禁的
+`blocking` 分支在证据校验前是无条件放行区间（人类起源双证据也可另行编造）。也就是说
+「门禁自己记下的异常」可以被被约束方静默抹掉，§8.4 承诺的 fail-open 留痕形同自愿。
+
+判据 `checkGateExceptionLedgerReconciled`（`core.mjs`，stop 侧在 `cancelled` 之后、
+`blocking` 分支**之前**调用——放在 blocking 之后就正好落进那段无条件放行区间）：
+
+- **孤儿条目** = 台账中 `processPath` 指向当前活跃 `process.md`、尚未 `releasedAt`、
+  且指纹在 `## 门禁异常事件` 表中找不到对应行的条目；命中即 `gate-exception-ledger-orphan`，阻断收尾。
+- **归属**（`recordGateExceptionLedgerEntry` 落 `processPath` + `recordedAt`）：不按 process 归属的话，
+  每次迭代切换子树都会把上一份 process 的条目变成**无法消解**的孤儿——补不回来，因为那张表已不在。
+- **升级兼容**：历史条目无 `processPath` 字段，一律排除在孤儿判定外；否则升级当天所有存量条目一起爆。
+- **处置**：须由 PM **按版本历史逐字恢复**该行（重新概括一句会与指纹失配，恢复不了），
+  或将该条目走正常释放流程消解掉——不接受「重写一条差不多的」。
+
+至此两个方向闭合：补行被指纹拦，删行被反向对账拦。回归见 `tests/selftest/blocking-failopen.mjs`
+（`findOrphanGateExceptionLedgerEntries` / `checkGateExceptionLedgerReconciled` 两组断言，
+含「删整行」「改摘要」「已释放条目不再追究」「历史无 processPath 条目不误判」四类形态）。
 
 **能力边界**：见 §8.7 边界 4。**人类起源**的两项证据仍由 PM 书写，机读只证明「阻塞被写清楚了、
 并声称问过用户」。
@@ -643,15 +794,30 @@ PM 写 `process.md`——该写入正常放行，不构成死锁；`loop_limit: 
 **机械判据（本节只列门禁侧，完整定义与选型指引见 `workflow-modes.md`「`single-task` = 增量迭代档」）**：
 
 - **前置**（`checkSingleTaskPreconditions`，发起 SA / DE 前校验）：基线 `detail-design-spec.md` 存在
-  （`checkSingleTaskBaseDesign`）+ `process.md`「## 增量范围」四维声明合规
-  （`checkIncrementScopeDeclared`）+ **schema 维填「是」直接拒绝**（把分诊表里早有、实现里从未有的
-  「修改数据模型 ⇒ 禁止 `single-task`」补成机械判据，R12）。
+  （`checkSingleTaskBaseDesign`）+ `process.md`「## 增量范围」**五维**声明合规
+  （`checkIncrementScopeDeclared`）+ **「需要迁移脚本 / 破坏向后兼容」维填「是」直接拒绝**
+  （`increment-scope-breaking-change`；把分诊表里早有、实现里从未有的「修改数据模型 ⇒ 禁止
+  `single-task`」补成机械判据，R12——**F-08** 后判据落在破坏性而非「碰没碰数据」上）。
+- **F-08 分档（2026-08-11，放松方向，留痕见 §8.5）**：原单一 `schema` 维拆为「数据形状变更」+
+  「需要迁移脚本 / 破坏向后兼容」两维。前者填「是」**不再**单独禁用增量档；仅后者填「是」硬禁用。
+  「形状变、兼容未破」这条新路径以一条**新增**判据换取：两维说明列须声明**兼容性回归用例**
+  （`increment-scope-missing-compat-regression`），且本轮唯一测试须落地该用例的执行记录
+  （`checkIncrementCompatRegressionReport`，`qe.mjs`）。缺任一条即回退为拒绝，等价于旧的硬禁用。
 - **折叠**（`parseWorkflowState`）：`foldedTestChannel = isHotfix || isSingleTask` ⇒ `batchTestComplete`
   恒真、`finalTestRequired = devComplete && qeComplete`；但 `finalTestComplete` 对 `single-task`
-  **额外要求** `batchApiReportPresent && batchStorageReconPresent`（R14/R17 并入折叠通道）。
+  **额外要求** `batchApiReportPresent && batchStorageReconPresent`（R14/R17 并入折叠通道），
+  并在 `compatOnlySchemaChange` 为真时**再加** `incrementCompatRegressionPresent`（F-08）。
 - **唯一角色侧简化**：发起 `requirement-reviewer` / `development-engineer` 时豁免 **R26** 技术选型确认
   （基线项目已 AskUserQuestion 确认并落痕，增量不换栈）。**R25 同构模块识别不豁免**——增量最容易
   「复制既有实现改两行」，正是 R25 要拦的场景。
+- **多轮交叉校验（F-09，`iterationRound ≥ 2`）**：`checkIncrementScopeRequirementCrossCheck`
+  （`design.mjs`）要求「## 增量范围」每个「是」维度（**迁移维除外**——该维为「是」时增量档整体
+  已失效）在说明列引用至少一个**本轮**新立的 `R-` 编号；本轮零编号 → `increment-no-round-requirement-ids`，
+  某维度未引用 → `increment-scope-requirement-unlinked`。挂在 **SA 与 DE 两个派发分支**
+  （只挂 SA 则「跳过 SA 直接派 DE」即可绕过）。本轮编号的认定见 `extractRoundRequirementIds`：
+  有 `轮次`/`迭代` 列时取该列，无该列（含出厂模板）时按行内任一格的轮次标识判定。
+  拦的是增量档最典型的失效形态——声明了「本轮新增对外接口」，需求清单里却没有任何本轮新立需求，
+  即改动绕过需求澄清与用户确认直接进入设计与开发。判据表见 `workflow-modes.md`「`iterationRound`」。
 - **R20 意图词扩展**：`single-task` 的确认关键词新增「增量 / 增量迭代」，旧词（单任务 / 小改动）保留，
   既有项目的确认行不失效（R12：不得因改口径回退门禁）。
 

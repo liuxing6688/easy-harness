@@ -21,6 +21,11 @@ import {
   PROJECT_ROOT,
   DESIGN_SPEC,
   GATED_EMPTY,
+  REQ_SPEC,
+  REQ_LIST,
+  TASK_LIST,
+  DPL_CLEAN,
+  greenfieldReady,
   relToProject,
   writeFixture,
   check,
@@ -59,15 +64,33 @@ const INCREMENT_SCOPE = [
   '| 影响面 | 是否涉及 | 说明 |',
   '| ------ | -------- | ---- |',
   '| 新增/变更对外接口 | 是 | 新增 GET /api/todos/export 导出接口 |',
-  '| 数据模型 / schema 变更 | 否 | 复用既有 todos 表，无字段与迁移变更 |',
+  '| 数据形状变更（新增/修改字段、表、集合） | 否 | 复用既有 todos 表，无字段变更 |',
+  '| 需要迁移脚本 / 破坏向后兼容 | 否 | 无迁移脚本，读写口径不变 |',
   '| 新增交互面（页面/命令/入口） | 否 | 复用既有列表页，仅加一个导出按钮 |',
   '| 影响的既有行为 | 是 | 列表页工具栏布局微调，回归范围限于列表页 |',
   '',
 ].join('\n');
 
-const INCREMENT_SCOPE_SCHEMA = INCREMENT_SCOPE.replace(
-  '| 数据模型 / schema 变更 | 否 | 复用既有 todos 表，无字段与迁移变更 |',
-  '| 数据模型 / schema 变更 | 是 | 新增 todos.exported_at 字段与迁移脚本 |',
+/** F-08：破坏性变更（须迁移脚本）⇒ 增量档硬禁用，AF12 端到端锁定 */
+const INCREMENT_SCOPE_SCHEMA = INCREMENT_SCOPE
+  .replace(
+    '| 数据形状变更（新增/修改字段、表、集合） | 否 | 复用既有 todos 表，无字段变更 |',
+    '| 数据形状变更（新增/修改字段、表、集合） | 是 | 新增 todos.exported_at 字段 |',
+  )
+  .replace(
+    '| 需要迁移脚本 / 破坏向后兼容 | 否 | 无迁移脚本，读写口径不变 |',
+    '| 需要迁移脚本 / 破坏向后兼容 | 是 | 须写迁移脚本回填历史行 |',
+  );
+
+/** F-08：形状变但向后兼容且无迁移 ⇒ 增量档可用，但须声明兼容性回归用例（AF12b/AF12c） */
+const INCREMENT_SCOPE_COMPAT_ONLY = INCREMENT_SCOPE.replace(
+  '| 数据形状变更（新增/修改字段、表、集合） | 否 | 复用既有 todos 表，无字段变更 |',
+  '| 数据形状变更（新增/修改字段、表、集合） | 是 | 新增可选字段 todos.dueDate，默认 null |',
+);
+
+const INCREMENT_SCOPE_COMPAT_DECLARED = INCREMENT_SCOPE_COMPAT_ONLY.replace(
+  '| 需要迁移脚本 / 破坏向后兼容 | 否 | 无迁移脚本，读写口径不变 |',
+  '| 需要迁移脚本 / 破坏向后兼容 | 否 | 无迁移脚本；兼容性回归：历史无 dueDate 的待办仍可读取与更新 |',
 );
 
 const DISPATCH = [
@@ -291,7 +314,7 @@ export function auditFixesScenarios() {
   checkFollowupText(
     'AF8 R38：lint 工具不可用 → followup 指向环境/工具处置，且不劝「整改质量问题」',
     { hook: 'stop', processPath: r34Proc },
-    { must: ['R38 工具不可用', 'AskQuestion', '双要素豁免'], mustNot: ['将违规整改至'] },
+    { must: ['R38 工具不可用', 'AskUserQuestion', '双要素豁免'], mustNot: ['将违规整改至'] },
   );
   clearLint();
 
@@ -305,7 +328,7 @@ export function auditFixesScenarios() {
   checkFollowupText(
     'AF9 R35：只写 blocking: true 不再能静默收尾（历史为无条件放行）',
     { hook: 'stop', processPath: relToProject(path.join(bare, 'docs/process/process.md')) },
-    { must: ['R35', 'AskQuestion'] },
+    { must: ['R35', 'AskUserQuestion'] },
   );
 
   const evidenced = writeFixture('af-r35-ok', {
@@ -346,12 +369,32 @@ export function auditFixesScenarios() {
     'docs/design/detail-design-spec.md': DESIGN_SPEC,
     'docs/design/gated-artifacts.json': GATED_EMPTY,
   });
-  check('AF12 R37：声明涉及 schema 变更时禁用增量档（补齐分诊表既有规则）', 'deny', {
+  check('AF12 R37/F-08：声明需要迁移/破坏兼容时禁用增量档（破坏性变更硬禁用）', 'deny', {
     hook: 'role',
     role: 'development-engineer',
     processPath: relToProject(path.join(schemaChange, 'docs/process/process.md')),
     gatedPath: relToProject(path.join(schemaChange, 'docs/design/gated-artifacts.json')),
   });
+
+  // F-08 的两条端到端：形状变而兼容未破时增量档可用，**但**须声明兼容性回归用例。
+  // 缺 AF12b 则 F-08 变成净放松——「加个字段」从此免于任何额外验证（R12）。
+  const compatUndeclared = writeFixture('af-r37-compat-undeclared', {
+    'docs/process/process.md': singleTaskProcess({ scope: INCREMENT_SCOPE_COMPAT_ONLY }),
+    'docs/design/detail-design-spec.md': DESIGN_SPEC,
+    'docs/design/gated-artifacts.json': GATED_EMPTY,
+  });
+  check('AF12b R37/F-08：形状变+兼容未破但未声明兼容性回归用例 → 仍拒（放松须有对价）', 'deny', {
+    hook: 'role',
+    role: 'development-engineer',
+    processPath: relToProject(path.join(compatUndeclared, 'docs/process/process.md')),
+    gatedPath: relToProject(path.join(compatUndeclared, 'docs/design/gated-artifacts.json')),
+    // 钉死**拒绝理由**：这组夹具只备了设计文档，若不校验文案，`missing-design-artifacts`
+    // 之类的无关拒绝也会让本例「通过」，F-08 判据其实从未被执行到。
+    mustInclude: '兼容性回归',
+  });
+
+  // 声明齐备后本档放行、以及「兼容性回归用例须真的跑」这两条，落在下方 AF12c/AF12d
+  // （stop 通道）——因为放行侧要求设计成果物全就绪，而收尾侧才是新增判据真正生效的地方。
 
   // 折叠通道：一轮测试即可，但 R14/R17 不得缺
   const foldedNoReport = writeFixture('af-r37-folded-noreport', {
@@ -394,6 +437,57 @@ export function auditFixesScenarios() {
     hook: 'stop',
     processPath: relToProject(path.join(foldedOk, 'docs/process/process.md')),
     gatedPath: relToProject(path.join(foldedOk, 'docs/design/gated-artifacts.json')),
+  });
+
+  // F-08 的对价在收尾侧兑现：走「形状变、兼容未破」这条新开路径时，
+  // 单轮测试报告里必须真有兼容性回归用例的执行记录，否则不得收尾。
+  const compatNoCase = writeFixture('af-r37-compat-nocase', {
+    'docs/process/process.md': singleTaskProcess({
+      scope: INCREMENT_SCOPE_COMPAT_DECLARED,
+      progressRows: [
+        '| 开发工程师 | T-1 | 执行完成 | |',
+        '| 质量工程师 | T-1 | 执行完成 | |',
+        '| 测试工程师 | 最终整体集成测试 T-1 | 执行完成 | |',
+      ],
+    }),
+    'docs/design/detail-design-spec.md': DESIGN_SPEC,
+    'docs/design/gated-artifacts.json': GATED_EMPTY,
+    'docs/test/test-report.md': FOLDED_REPORT,
+  });
+  checkFollowupText(
+    'AF12c R37/F-08：走兼容路径但报告无兼容性回归用例 → 不得收尾（否则 F-08 是净放松）',
+    {
+      hook: 'stop',
+      processPath: relToProject(path.join(compatNoCase, 'docs/process/process.md')),
+    },
+    { must: ['兼容性回归'] },
+  );
+
+  const compatWithCase = writeFixture('af-r37-compat-withcase', {
+    'docs/process/process.md': singleTaskProcess({
+      scope: INCREMENT_SCOPE_COMPAT_DECLARED,
+      progressRows: [
+        '| 开发工程师 | T-1 | 执行完成 | |',
+        '| 质量工程师 | T-1 | 执行完成 | |',
+        '| 测试工程师 | 最终整体集成测试 T-1 | 执行完成 | |',
+      ],
+    }),
+    'docs/design/detail-design-spec.md': DESIGN_SPEC,
+    'docs/design/gated-artifacts.json': GATED_EMPTY,
+    'docs/test/test-report.md': [
+      FOLDED_REPORT,
+      '## 兼容性回归（R37/F-08）',
+      '',
+      '| 用例 | 关联需求 | 关联任务包 | 预期 | 实际 | 是否通过 |',
+      '| ---- | -------- | ---------- | ---- | ---- | -------- |',
+      '| 兼容性回归：历史无 dueDate 的待办仍可读取与更新 | R-001 | T-1 | 200 且字段为 null | 一致 | 是 |',
+      '',
+    ].join('\n'),
+  });
+  check('AF12d R37/F-08：兼容性回归用例已落地 → 折叠通道放行收尾（新开路径确实可用）', 'allow-stop', {
+    hook: 'stop',
+    processPath: relToProject(path.join(compatWithCase, 'docs/process/process.md')),
+    gatedPath: relToProject(path.join(compatWithCase, 'docs/design/gated-artifacts.json')),
   });
 
   // -------------------------------------------------------------------------
@@ -455,13 +549,72 @@ export function auditFixesScenarios() {
   writeStaticScanPass();
   writeStartupSmokePass();
   writeLintStale();
+  // F-24：过期产物现在走独立文案（「R34 产物新鲜度」），与「验签失败」分列——
+  // 断言随之收紧：既要指向 R34，又必须明确「重新运行」，且**不得**出现造假嫌疑措辞。
   checkFollowupText(
     'AF19 R34：签名有效但早于源码变更的陈旧产物 → followup 指向重跑而非整改',
     { hook: 'stop', processPath: relToProject(path.join(foldedOk, 'docs/process/process.md')) },
-    { must: ['R34 执行证明'] },
+    { must: ['R34 产物新鲜度', '已过期', '重新运行'], mustNot: ['手工编辑'] },
   );
 
   clearE2e('final');
   clearLint();
   clearStaticScan();
+
+  // ── F-01：R5 角色↔路径判据须以**调用者身份**为先，活跃角色并集只作兜底 ──────────
+  // 历史实现只问「期望角色是否出现在活跃并集里」，而并集 =（最近派发 ∪ 进度正在执行 ∪
+  // 当前分派计划 ∪ 待派发列表），流程中后期几乎覆盖全部 7 个角色 → 越权写入一律放行。
+  // 这几条用 payload 的 `agent_type` 钉住「谁在写」，并保留一条反向用例保证不误伤。
+  const f01 = writeFixture('af-f01-caller-role', {
+    // 活跃并集刻意"很宽"（SA 正在执行 + 计划里有 DE + 待派发有 DE），正是历史缺陷的温床
+    'docs/process/process.md': greenfieldReady([
+      '| 系统架构师 | 详细设计 | 正在执行 | |',
+      '| 需求评审专家 | 设计审核 | 正在执行 | |',
+      '| 开发工程师 | T0-1 | 正在执行 | |',
+      '| 质量工程师 | T0-1 | 正在执行 | |',
+    ]),
+    'docs/requirement/requirement-spec.md': REQ_SPEC,
+    'docs/requirement/requirement-list.md': REQ_LIST,
+    'docs/design/detail-design-spec.md': DESIGN_SPEC,
+    'docs/design/develop-task-list.md': TASK_LIST,
+    'docs/design/design-problem-list.md': DPL_CLEAN,
+    'docs/design/gated-artifacts.json': GATED_EMPTY,
+  });
+  const f01Proc = relToProject(path.join(f01, 'docs/process/process.md'));
+  const f01Gated = relToProject(path.join(f01, 'docs/design/gated-artifacts.json'));
+
+  check('AF20 F-01：RR 改写 detail-design-spec.md（期望 SA，历史为 ALLOW）', 'deny', {
+    hook: 'write', filePath: 'docs/design/detail-design-spec.md',
+    callerRole: 'requirement-reviewer',
+    processPath: f01Proc, gatedPath: f01Gated,
+    mustInclude: ['R5', 'requirement-reviewer'],
+  });
+  check('AF21 F-01：DE 改写 gated-artifacts.json（门禁旋钮仅 SA，历史为 ALLOW）', 'deny', {
+    hook: 'write', filePath: 'docs/design/gated-artifacts.json',
+    callerRole: 'development-engineer',
+    processPath: f01Proc, gatedPath: f01Gated,
+    mustInclude: ['R5', 'development-engineer'],
+  });
+  check('AF22 F-01：QE 改写 process.md（期望 PM，历史为 ALLOW）', 'deny', {
+    hook: 'write', filePath: 'docs/process/process.md',
+    callerRole: 'quality-engineer',
+    processPath: f01Proc, gatedPath: f01Gated,
+    mustInclude: 'R5',
+  });
+  check('AF23 F-01 Shell 通道：RR 用重定向改写设计文档', 'deny', {
+    hook: 'shell', command: 'echo x >> docs/design/detail-design-spec.md',
+    callerRole: 'requirement-reviewer',
+    processPath: f01Proc, gatedPath: f01Gated,
+    mustInclude: 'R5',
+  });
+  // 反向：身份与期望角色一致时照常放行；未传 agent_type 时保持既有并集兜底行为。
+  check('AF24 F-01 反向：SA 写 detail-design-spec.md 放行', 'allow', {
+    hook: 'write', filePath: 'docs/design/detail-design-spec.md',
+    callerRole: 'system-architect',
+    processPath: f01Proc, gatedPath: f01Gated,
+  });
+  check('AF25 F-01 反向：无 agent_type 时沿用活跃角色并集（既有行为不变）', 'allow', {
+    hook: 'write', filePath: 'docs/design/detail-design-spec.md',
+    processPath: f01Proc, gatedPath: f01Gated,
+  });
 }

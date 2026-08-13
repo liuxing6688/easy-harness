@@ -26,9 +26,11 @@ import {
   parseRequirementP0Ids,
   parseCoverageWaivers,
   computeGateResult,
+  checkPlaywrightOutputDir,
 } from './e2e-run-lib.mjs';
 import { classifyCommandFailure } from './tool-availability-lib.mjs';
-import { attachExecutionProof } from '../hooks/lib/execproof.mjs';
+import { attachExecutionProof, warnIfUnsigned } from '../hooks/lib/execproof.mjs';
+import { getActiveDocsBase } from '../hooks/lib/core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -70,22 +72,40 @@ function loadWaivedIds() {
  *   - batch：`--required-ids=R-001,R-002`
  *   - final：`--baseline=<requirement-list.md>` 提取全部 P0
  */
-function loadRequiredIds(args) {
+function loadRequiredIds(args, scope) {
   if (args['required-ids']) {
-    return args['required-ids']
+    const ids = args['required-ids']
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean);
-  }
-  if (args.baseline) {
-    const baselinePath = path.resolve(PROJECT_ROOT, args.baseline);
-    if (!fs.existsSync(baselinePath)) {
-      throw new Error(`baseline 文件不存在：${baselinePath}`);
+    if (ids.length === 0) {
+      throw new Error('--required-ids 解析后为空：覆盖率判据会被架空，请给出真实需求编号。');
     }
-    const content = fs.readFileSync(baselinePath, 'utf8');
-    return parseRequirementP0Ids(content);
+    return ids;
   }
-  return [];
+
+  // F-06（2026-08-11 审核修复）：历史实现在既无 `--required-ids` 也无 `--baseline` 时
+  // 返回 `[]`，于是 `missingIds` 恒空、`coverageComplete` 恒真——**少打一个参数**就能让
+  // 「Chromium 覆盖全部 required P0」这条 §8.3 判据整体失效，且产物照旧被真私钥签名，
+  // R34 完全无效（产物确实是真跑出来的）。故改为：缺省自动回落到活跃 docs 子树的
+  // requirement-list.md，解析不到 P0 一律**报错退出**，绝不静默产出空 required 集合。
+  const baselinePath = args.baseline
+    ? path.resolve(PROJECT_ROOT, args.baseline)
+    : path.join(getActiveDocsBase(), 'requirement/requirement-list.md');
+  if (!fs.existsSync(baselinePath)) {
+    throw new Error(
+      `覆盖率基线不存在：${baselinePath}\n` +
+        'E2E 覆盖率判据须有真实的 required P0 集合。请显式给出 --baseline=<requirement-list.md> 或 --required-ids=R-001,R-002。',
+    );
+  }
+  const ids = parseRequirementP0Ids(fs.readFileSync(baselinePath, 'utf8'));
+  if (ids.length === 0) {
+    throw new Error(
+      `覆盖率基线未解析到任何 P0 需求：${baselinePath}\n` +
+        '空 required 集合会让 coverageComplete 恒真（F-06）。请先在 requirement-list.md 如实标注 P0，或用 --required-ids 显式给出。',
+    );
+  }
+  return ids;
 }
 
 /**
@@ -107,8 +127,31 @@ function checkPlaywrightDependency() {
     return {
       ok: false,
       reason: 'missing-playwright-config',
+      toolUnavailable: true,
       message:
-        '未找到 playwright.config.*（E2E 机械门禁的运行时依赖）。若为接入已有项目，请确认已按 README「快速开始 · 方式二」把 playwright.config.ts 与 e2e/ 一并复制到项目根。',
+        '未找到 playwright.config.*（E2E 机械门禁的运行时依赖）。harness 模板在项目根自带 playwright.config.ts，' +
+        '请确认接入时已随 e2e/ 一并复制到项目根；若需按本项目技术栈重写，务必遵守 ' +
+        '`.claude/harness/spec/mechanical-gates.md` §8.3「Playwright 配置约束」（其中 `outputDir` ' +
+        '**不得**是门禁产物目录 test-results/qe、test-results/e2e、test-results/recon 的祖先或自身——' +
+        'Playwright 每次运行前清空 outputDir，会连带删除 ' +
+        'lint / 静态扫描 / 启动冒烟 / 对账等全部机读门禁证据）。该文件属产品源码路径，只能由 development-engineer 创建或修改。',
+    };
+  }
+  // **F-05 机械兜底**：`outputDir` 此前只由「模板默认值 + 三处文档」承载，宿主项目重写配置
+  // 即可重演「跑一次 E2E 删光全部机读证据」。判据必须在**跑 Playwright 之前**执行——
+  // 跑完再判等于证据已经没了。判据本体见 `e2e-run-lib.mjs#checkPlaywrightOutputDir`。
+  const outputDir = checkPlaywrightOutputDir(
+    fs.readFileSync(path.join(PROJECT_ROOT, configFile), 'utf8'),
+    PROJECT_ROOT,
+  );
+  if (!outputDir.ok) {
+    return {
+      ok: false,
+      reason: outputDir.reason,
+      // **不是**工具不可用：配置违反 §8.3 属须修复的门禁问题，不得走 R38 双要素豁免流程
+      // 被当成「环境问题」放过——那正好是 F-05 的失效路径（证据没了、无人说得清原因）。
+      toolUnavailable: false,
+      message: `${configFile}：${outputDir.message}`,
     };
   }
   try {
@@ -119,6 +162,7 @@ function checkPlaywrightDependency() {
     return {
       ok: false,
       reason: 'missing-playwright-dependency',
+      toolUnavailable: true,
       message:
         `${configFile} 依赖 @playwright/test，但在项目根解析不到该包，Playwright 会在加载配置时崩溃且不产出 JSON 报告。` +
         '请先由 test-engineer 按「检测→询问用户→确认→安装」流程执行：npm i -D @playwright/test && npx playwright install chromium',
@@ -137,7 +181,14 @@ function runPlaywright() {
       cwd: PROJECT_ROOT,
       stdio: ['ignore', 'inherit', 'pipe'],
       encoding: 'utf8',
-      env: { ...process.env },
+      // F-14：本机 HTTP_PROXY 会劫持 Playwright 对 http://127.0.0.1:<port> 的就绪探测，
+      // 报「端口已被占用」而端口实际空闲。playwright.config.ts 只能覆盖 webServer.env，
+      // 探测发生在 Playwright 主进程，故这里也须显式绕过回环地址（勿删）。
+      env: {
+        ...process.env,
+        NO_PROXY: process.env.NO_PROXY ?? '127.0.0.1,localhost,::1',
+        no_proxy: process.env.no_proxy ?? '127.0.0.1,localhost,::1',
+      },
     });
     return { exitCode: 0, output: '' };
   } catch (err) {
@@ -189,18 +240,22 @@ function writeResult(scope, result) {
   const file = scope === 'final' ? '.e2e-final-result.json' : '.e2e-batch-result.json';
   attachExecutionProof(scope === 'final' ? 'e2e-final' : 'e2e-batch', result);
   fs.writeFileSync(path.join(RESULT_DIR, file), `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+  warnIfUnsigned(result); // F-03：未落签时给出与 stop 门禁一致的排查方向
 }
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
   const scope = args.scope === 'final' ? 'final' : 'batch';
 
-  const requiredIds = loadRequiredIds(args);
+  const requiredIds = loadRequiredIds(args, scope);
   const waivedIds = loadWaivedIds();
 
   // 依赖缺失属环境问题而非用例失败：直接给出确切原因，不跑一遍再报「报告缺失」。
+  // **F-05**：`outputDir` 违规不在此列——它是须修复的配置问题，`toolUnavailable: false`，
+  // 不得走 R38 双要素豁免被当成环境问题放过。
   const preflight = checkPlaywrightDependency();
   if (!preflight.ok) {
+    const toolUnavailable = preflight.toolUnavailable === true;
     const failResult = {
       scope,
       gatePassed: false,
@@ -214,9 +269,10 @@ function main() {
       reason: preflight.reason,
       error: preflight.message,
       // R38：配置/依赖缺失属工具不可用，门禁据此走「环境问题」而非「用例失败」文案。
-      toolUnavailable: true,
-      toolUnavailableCategory: 'dependency-fetch',
-      toolUnavailableDetail: preflight.reason,
+      toolUnavailable,
+      ...(toolUnavailable
+        ? { toolUnavailableCategory: 'dependency-fetch', toolUnavailableDetail: preflight.reason }
+        : {}),
       executedAt: new Date().toISOString(),
     };
     writeResult(scope, failResult);
@@ -253,7 +309,10 @@ function main() {
   }
 
   const chromiumResults = parseChromiumResults(report);
-  const gate = computeGateResult(chromiumResults, requiredIds, waivedIds);
+  // F-14：把进程退出码并入判据（详见 e2e-run-lib.mjs computeGateResult 注释）。
+  const gate = computeGateResult(chromiumResults, requiredIds, waivedIds, {
+    playwrightExitCode: exitCode,
+  });
 
   const finalResult = {
     scope,

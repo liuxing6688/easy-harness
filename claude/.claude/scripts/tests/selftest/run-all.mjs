@@ -36,6 +36,14 @@ import './r35-blocking-evidence.mjs';
 import './r36-gate-exception.mjs';
 import './r37-single-task.mjs';
 import './r38-tool-unavailable.mjs';
+// 2026-08-11 v2 评审：F-10 表格转义竖线击穿全部表格判据；
+// F-11 同名/多轮章节只取第一节；F-17 轻量模式确认无时效性；F-09 审核结论跨轮沿用
+import './r30-table-escape.mjs';
+import './f09-f11-f17-round.mjs';
+// F-06 覆盖率可被省参数架空；F-14 进程级故障被误导成「用例没写够」
+import './f06-f14-e2e-gate.mjs';
+// F-05 加固：playwright.config.* 的 outputDir 由机械层兜底（原只靠模板默认值 + 文档）
+import './f05-outputdir.mjs';
 import './templates-vs-gates.mjs';
 import './gated-artifacts-config.mjs';
 

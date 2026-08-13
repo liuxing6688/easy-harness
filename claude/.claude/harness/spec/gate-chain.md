@@ -46,12 +46,13 @@
 >
 > hotfix 只在前端省去 RA/SA，**后端 QE + 集成测试 + E2E 一律不省**（`mechanical-gates.md` §8.3 适用范围含 hotfix）；但测试环节按 **R11** 折叠为单次通道（不再区分批次集成测试与最终整体集成测试，见 `mechanical-gates.md` §8.2/§8.3），消除"一次性小改动被迫走两轮测试工程师"的流程冗余，严格程度不降低。
 
-**`single-task` 模式门禁链（增量迭代档，**R37**）**：项目经理记录目标 →（**R20** 工作流模式确认）→（**R37** 前置：基线 `detail-design-spec.md` 存在 + `## 增量范围` 四维声明 + schema 变更禁用）→ 需求分析师（最小澄清集，仍含 R19/R27/**R33**）→ 系统架构师（增量设计，**跳过阶段 1 技术选型**）→ 需求评审专家（R18 全量 + R25，**豁免 R26 选型确认**）→ 开发工程师 → QE（R15/R16）→ 测试工程师（**单轮**集成测试 + E2E + R14 + R17 + R32）。
+**`single-task` 模式门禁链（增量迭代档，**R37**）**：项目经理记录目标 →（**R20** 工作流模式确认）→（**R37** 前置：基线 `detail-design-spec.md` 存在 + `## 增量范围` 五维声明 + 破坏性变更禁用 + F-08 兼容性回归对价）→ 需求分析师（最小澄清集，仍含 R19/R27/**R33**）→ 系统架构师（增量设计，**跳过阶段 1 技术选型**）→ 需求评审专家（R18 全量 + R25，**豁免 R26 选型确认**）→ 开发工程师 → QE（R15/R16）→ 测试工程师（**单轮**集成测试 + E2E + R14 + R17 + R32）。
 
 > **R37（`single-task` 增量档前置校验）**：与 R9 同构地在 **Agent 发起期**校验（`checkSingleTaskPreconditions`，对 `system-architect` 与 `development-engineer` 生效）：
 > 1. **基线设计存在**（`checkSingleTaskBaseDesign`）：活跃 docs 子树须有 `detail-design-spec.md`。缺失说明这其实是首次开发，须改走 `full`——不得用增量档绕过基线设计与 R26 选型确认；
-> 2. **增量范围四维声明**（`checkIncrementScopeDeclared`）：`process.md`「## 增量范围」须四维齐全、「是否涉及」为「是/否」、「说明」有实质内容。这张表是「折叠成一轮测试」的论证依据；
-> 3. **schema 变更硬禁用**：第二维填「是」时直接拒绝派发，须 `AskUserQuestion` 改回 `full`（补齐 `workflow-modes.md` 分诊表早有、实现里从未校验的规则，R12）。
+> 2. **增量范围五维声明**（`checkIncrementScopeDeclared`）：`process.md`「## 增量范围」须五维齐全、「是否涉及」为「是/否」、「说明」有实质内容。这张表是「折叠成一轮测试」的论证依据；
+> 3. **破坏性变更硬禁用**：「需要迁移脚本 / 破坏向后兼容」维填「是」时直接拒绝派发（`increment-scope-breaking-change`），须 `AskUserQuestion` 改回 `full`（承接 `workflow-modes.md` 分诊表早有、实现里从未校验的规则，R12）；
+> 4. **兼容性回归对价**（**F-08**）：「数据形状变更：是 + 需要迁移/破坏兼容：否」时增量档可用，但两维说明列须声明**兼容性回归用例**（缺则 `increment-scope-missing-compat-regression` 拒绝派发），且本轮唯一测试须落地该用例（stop 门禁机读 `checkIncrementCompatRegressionReport`）。
 >
 > 与 hotfix 的关键区别：`single-task` 的折叠通道**保留** R14 接口测试与 R17 存储对账（增量常新增接口与写入路径），只有 hotfix 才跳过这两项。唯一的角色侧简化是豁免 R26 技术选型确认。完整定义见 `workflow-modes.md`「`single-task` = 增量迭代档」。
 

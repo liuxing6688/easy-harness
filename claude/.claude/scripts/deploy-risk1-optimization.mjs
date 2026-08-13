@@ -2,6 +2,11 @@
 /**
  * 风险1优化方案 - 一键部署脚本
  *
+ * ⚠️ 已过时（2026-08-06 交付期脚本，勿运行）：本脚本以 `.claude/hooks/hooks.json` 与
+ * `hooks-v2.1.json` 为部署对象，这两个文件**均已不存在**。Hook 注册的唯一权威源是
+ * `.claude/settings.json`，本方案的防护（`gate-dev-workflow-enhanced.mjs` /
+ * `session-init-enhanced.mjs`）**早已注册生效**，无需再部署。保留仅作交付期留痕。
+ *
  * 用途：自动化部署权限模式防护优化
  *
  * 运行：node .claude/scripts/deploy-risk1-optimization.mjs

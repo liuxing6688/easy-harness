@@ -16,7 +16,16 @@
 import {
   test, assert, cleanup, fixtureProcess, isGatedArtifactsConfigPath, isGatedRoleArtifactPath,
   expectedRolesForPath, checkRolePathPermission, classifyShellWriteIntent, isGatedDevPath,
+  snapshotDispatchedRoles, restoreDispatchedRoles, clearDispatchedRoles,
 } from './_harness.mjs';
+
+// `checkRolePathPermission` 对非源码路径会把「最近 Task 派发角色」并入活跃集合（见
+// collectActiveRoleSlugs）。该状态是**仓库级**文件 `.claude/hooks/.dispatched-roles.json`，
+// 不随 fixtureProcess 隔离：宿主仓库里若残留一份含全部 7 个角色的记录（真实开发中很常见），
+// 本套件的「越权角色应被拒」用例会因活跃集合恒含 system-architect 而假通过/假失败。
+// 故进程级快照 + 清空，退出时还原，使判据只由夹具 process.md 决定。
+snapshotDispatchedRoles();
+clearDispatchedRoles();
 
 const GA = 'docs/design/gated-artifacts.json';
 const GA_FEATURE = 'docs/my-feature/design/gated-artifacts.json';
@@ -82,3 +91,4 @@ test('R29 加强: Shell 通道写该文件也纳入目标判据（R28 同源）'
 });
 
 cleanup();
+restoreDispatchedRoles();

@@ -9,12 +9,15 @@ import {
   normalizeRoleSlug,
   readProcessMd,
   extractSection,
+  splitTableRow,
+  isTableSeparatorLine,
   ROLE_ALIASES,
   ROLE_SLUG_BY_ALIAS,
   } from './core.mjs';
 import { readRecentlyDispatchedRoles } from './identity.mjs';
 import { isProcessFilePath,
   isGatedDevPath,
+  isGatedDocArtifactPath,
   isE2eTestPath,
   isGatedArtifactsConfigPath,
   isHarnessStatePath
@@ -52,9 +55,9 @@ export function collectActiveRoleSlugs(content, { forSource = false } = {}) {
   if (plan) {
     for (const line of plan.split('\n')) {
       const t = line.trim();
-      if (!t.startsWith('|') || /^\|[\s|:-]+\|?$/.test(t)) continue;
+      if (!t.startsWith('|') || isTableSeparatorLine(t)) continue;
       if (/任务包编号|分派角色/.test(t)) continue;
-      const cells = t.split('|').map((c) => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
+      const cells = splitTableRow(t);
       // | 任务包 | 角色 | 并行 | 状态 |
       if (cells.length >= 2) {
         const slug = normalizeRoleSlug(cells[1]);
@@ -68,9 +71,9 @@ export function collectActiveRoleSlugs(content, { forSource = false } = {}) {
     if (pending) {
       for (const line of pending.split('\n')) {
         const t = line.trim();
-        if (!t.startsWith('|') || /^\|[\s|:-]+\|?$/.test(t)) continue;
+        if (!t.startsWith('|') || isTableSeparatorLine(t)) continue;
         if (/^\|\s*角色\s*\|/.test(t)) continue;
-        const cells = t.split('|').map((c) => c.trim()).filter((_, i, arr) => i > 0 && i < arr.length - 1);
+        const cells = splitTableRow(t);
         if (cells.length >= 1) {
           const slug = normalizeRoleSlug(cells[0]);
           if (slug) roles.add(slug);
@@ -98,11 +101,8 @@ export function isGatedRoleArtifactPath(filePath) {
   if (isHarnessStatePath(p)) return true;
   // **R29 加强**：项目级门禁配置由架构师维护，不再整体豁免（见 paths.isGatedArtifactsConfigPath）
   if (isGatedArtifactsConfigPath(p)) return true;
-  if (/(^|\/)docs\/(.+\/)?requirement\/.+\.(md|mdx|txt)$/.test(p)) return true;
-  if (/(^|\/)docs\/(.+\/)?design\/.+\.(md|mdx|txt)$/.test(p)) return true;
-  if (/(^|\/)docs\/(.+\/)?quality\/.+\.(md|mdx|txt)$/.test(p)) return true;
-  if (/(^|\/)docs\/(.+\/)?test\/.+\.(md|mdx|txt)$/.test(p)) return true;
-  return false;
+  // F-01：与 Shell 通道（classifyShellWriteIntent）共用同一判据，避免两处正则漂移。
+  return isGatedDocArtifactPath(p);
 }
 
 /** 路径期望的责任角色 slug 列表；非角色门禁路径返回 null */
@@ -142,18 +142,36 @@ function isDeOnlySourcePath(filePath, expected) {
 
 /**
  * R5：角色↔路径权限机读。
+ * - **调用者身份优先（2026-08-11 审核修复 F-01）**：`callerRole` 可判时以「谁在写」为唯一判据，
+ *   期望角色不含调用者即 deny；`collectActiveRoleSlugs()` 并集仅在身份不可判时兜底。
+ *   历史实现只看「process.md 里有谁活跃」，而并集含「最近派发（最近 8 个）∪ 进度正在执行
+ *   ∪ 分派计划 ∪ 待派发」，走到流程中后期几乎覆盖全部 7 个角色 → 该判据对文档成果物实际失效
+ *   （实测 `RR → detail-design-spec.md`、`DE → gated-artifacts.json` 均放行）。
  * - 源码 / `.claude/scripts|agents|hooks`：须 DE 在进度「正在执行」或当前分派计划中；
  *   且最近派发角色若为 TE/QE，直接 deny（不因进度表残留 DE 行而放行）（**R21**）；
  * - e2e/**：期望 test-engineer；非 TE（含 DE）默认 deny（**R23**）；
  * - 文档成果物：须活跃角色（含最近 Task 派发）命中期望角色；
  * - process.md 且尚无任何活跃角色：允许 PM 首次 bootstrap（空进度窗口）。
+ * @param {string} filePath
+ * @param {{ callerRole?: string|null }} [opts] `callerRole` 取自 payload 的 agent_type（子代理上下文）
  */
-export function checkRolePathPermission(filePath) {
+export function checkRolePathPermission(filePath, { callerRole } = {}) {
   const expected = expectedRolesForPath(filePath);
   if (!expected) return { ok: true, reason: 'not-role-gated' };
 
   const content = readProcessMd() ?? '';
   const forSource = isDeOnlySourcePath(filePath, expected);
+
+  // F-01：调用者身份可判时即为唯一判据——「谁在写」强于「谁在活跃」。
+  // Claude Code 的子代理 payload 带 agent_type，历史实现从未消费它。
+  const caller = normalizeRoleSlug(callerRole);
+  if (caller && !expected.includes(caller)) {
+    return {
+      ok: false,
+      reason: 'caller-role-mismatch',
+      message: `R5：路径「${normalizePath(filePath)}」期望角色 ${expected.join('/')}，本次写入的调用者角色为 ${caller}。禁止越权写入（调用者身份判据强于活跃角色并集）。`,
+    };
+  }
 
   // 最近派发明确为 TE/QE 时，禁止写产品源码（即便进度表仍残留 DE「正在执行」）
   if (forSource) {
@@ -181,7 +199,7 @@ export function checkRolePathPermission(filePath) {
       ok: false,
       reason: 'no-active-role',
       message:
-        'R5：无法判定活跃角色（process.md 进度/分派为空且无最近 Task 派发记录）。须先由项目经理分派对应角色 Task 后，再由该子 agent 写入。',
+        'R5：无法判定活跃角色（process.md 进度/分派为空且无最近 Agent 派发记录）。须先由项目经理分派对应角色 Agent 后，再由该子 agent 写入。',
     };
   }
 

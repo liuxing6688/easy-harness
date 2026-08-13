@@ -2,6 +2,11 @@
 /**
  * 风险1优化方案 - 回滚脚本
  *
+ * ⚠️ 已过时且危险（2026-08-06 交付期脚本，勿运行）：本脚本意在把 Hook 配置回滚到
+ * 「优化前」，其操作对象 `.claude/hooks/hooks.json` 已不存在；且回滚 auto 模式防护
+ * 属 **R12 意义上的放松**，须经用户明确确认并在 `.claude/harness/spec/**` 留痕。
+ * 保留仅作交付期留痕。
+ *
  * 用途：回滚到优化前的配置
  *
  * 运行：node .claude/scripts/rollback-risk1-optimization.mjs

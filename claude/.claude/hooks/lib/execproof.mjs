@@ -13,7 +13,7 @@
  *
  * ## 机制
  *
- * 1. **签发（Hook）**：`beforeShellExecution` 上 `gate-dev-shell` 识别出本次命令是框架
+ * 1. **签发（Hook）**：`PreToolUse`（`Bash|PowerShell`）上 `gate-dev-shell` 识别出本次命令是框架
  *    自带运行器时，生成一对 ed25519 密钥：**公钥**写入台账 `.exec-proof-ledger.json`，
  *    **私钥**写入交接文件 `.exec-proof-pending/<nonce>.json`。两者都在 `.claude/hooks/`
  *    下并由 **R29** 分级为 `runtime-marker`（代理写入一律 deny，含 Shell 通道）。
@@ -329,6 +329,29 @@ export function attachExecutionProof(kind, artifact) {
   return artifact;
 }
 
+/**
+ * F-03（2026-08-11 审核修复）：运行器 stdout 对「未落签」给出醒目提示。
+ *
+ * 背景：`gatePassed` 与 `execProof` 是两套独立字段。在门禁通道之外直连终端跑运行器时，
+ * 产物照样写出 `gatePassed: true`，而 stop 门禁会以另一条判据（`exec-proof-no-nonce`）
+ * 拒绝收尾——用户看到的是「运行器说通过了，门禁说没通过」，排查方向完全错位。
+ * 这里只加一行 stderr 提示，不改变任何判定（判定权仍在 Hook 侧）。
+ *
+ * @param {object|null} artifact 已 `attachExecutionProof` 的产物
+ */
+export function warnIfUnsigned(artifact) {
+  const proof = artifact?.execProof;
+  if (!proof || proof.signature) return;
+  process.stderr.write(
+    '\n[!] 本次运行**未取到门禁签发的 nonce**，产物为「自述未签名」状态'
+      + `（execProof.reason: ${proof.reason ?? 'unknown'}）。\n`
+      + '    即使上面显示 gatePassed: true，stop 门禁仍会按 R34 拒绝收尾。\n'
+      + '    成因：运行器不是经代理 Shell 通道（PreToolUse / gate-dev-shell 门禁）执行的，例如直接在外部终端里跑。\n'
+      + '    处置：由对应角色在代理会话内重新运行本运行器；若确需在门禁外执行，'
+      + '须由**用户本人**在 .claude/harness.config.json 设 execProof.enforce: false（R29 锁定，代理不得改）。\n\n',
+  );
+}
+
 // ---------------------------------------------------------------------------
 // R34 新鲜度：产物须晚于最后一次源码变更
 // ---------------------------------------------------------------------------
@@ -466,7 +489,7 @@ const REASON_MESSAGES = {
   'exec-proof-missing':
     '产物不含 execProof 执行证明字段——说明它不是由框架运行器在门禁签发下写出的（很可能是手写或旧版产物）',
   'exec-proof-no-nonce':
-    '产物自述未取到门禁签发的 nonce（execProof.nonce 为空）——本次运行器未经 beforeShellExecution 门禁签发，通常是在门禁之外的终端里执行的',
+    '产物自述未取到门禁签发的 nonce（execProof.nonce 为空）——本次运行器未经 PreToolUse Shell 门禁签发，通常是在门禁之外的终端里执行的',
   'exec-proof-unknown-nonce':
     '产物携带的 nonce 不在门禁台账中——nonce 伪造，或台账已被重置/该产物来自上一台账周期',
   'exec-proof-kind-mismatch': '产物携带的 nonce 是为另一类运行器签发的（kind 不匹配）',

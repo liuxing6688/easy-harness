@@ -600,7 +600,7 @@ export function getGateExceptionPolicy() {
 export function buildGateExceptionVerdict({ hook, context, err, channel, repairPaths = [] }) {
   const brief = String(err?.message ?? err).slice(0, 200);
   const common =
-    'AGENTS.md R36 / mechanical-gates.md §8.4：判定期异常不再静默放行（历史实现在此 fail-open，' +
+    'CLAUDE.md R36 / mechanical-gates.md §8.4：判定期异常不再静默放行（历史实现在此 fail-open，' +
     '等于「能让判定逻辑抛异常就能打开门禁」，而判定输入 process.md 恰由被约束方书写）。' +
     '请先修复导致异常的输入——最常见是活跃 process.md 结构损坏（frontmatter / 章节标题 / 表格被破坏），' +
     '并核查其「## 门禁异常事件」新增行。若确认是门禁自身缺陷，须把结论呈现给用户，' +
@@ -618,7 +618,7 @@ export function buildGateExceptionVerdict({ hook, context, err, channel, repairP
           `【流程门禁】（R36 判定期异常）stop 门禁在计算流程状态时抛出异常（${context}：${brief}），` +
           '无法判定流程是否闭环，故**不放行**本次收尾。' +
           '请调用 project-manager 核查 stderr 与 process.md「## 门禁异常事件」新增行并修正；' +
-          '若确认是门禁自身缺陷，用 AskQuestion 请用户决策并按 R35 在「## 阻塞原因」与「## 用户确认记录」留痕。' +
+          '若确认是门禁自身缺陷，用 AskUserQuestion 请用户决策并按 R35 在「## 阻塞原因」与「## 用户确认记录」留痕。' +
           '确需恢复旧的 fail-open 行为时，须由**用户本人**在 `.claude/harness.config.json` 设 `gateException.onJudgmentError: "allow"`。',
       },
     };
@@ -695,14 +695,93 @@ export function getToolchainInstallPatterns() {
  */
 const SECTION_NUMBER_PREFIX = String.raw`(?:\d+(?:\.\d+)*\s*[.、)]?\s*)?`;
 
-/** 提取指定 `## 标题` 章节正文（容忍编号前缀；标题须位于行首，不匹配正文中的 `##`） */
-export function extractSection(content, title) {
-  if (!content || typeof content !== 'string') return null;
+/**
+ * 轮次前缀（如 `## 第二轮需求覆盖矩阵`、`## 第 3 次审核结论`）。
+ *
+ * **F-11**：`design-problem-list.md` 的 `## 审核结论` 带「审核轮次」列，规约本就预期同一文件
+ * 承载多轮审核，但历史 `extractSection` 只取**第一个**同名章节：增量轮次若按「另起新章节」
+ * 组织（自然写法），R18 判据看不见新轮次的矩阵 → 一律拒派 DE；反向更严重——`## 审核问题表`
+ * 的 12 维校验同样只读第一节，等于**第二轮起「审核证据充分性」自动降级为「第一轮曾经充分」**。
+ * 故这里把「第 N 轮」类前缀纳入定位，并由 extractSectionAll 聚合全部同类章节。
+ */
+const SECTION_ROUND_PREFIX = String.raw`(?:第[^\n#|]{0,8}?[轮次]\s*)?`;
+
+/**
+ * 提取**全部**匹配 `## 标题` 章节的正文（容忍编号前缀与「第 N 轮」前缀、忽略标题行余下文字）。
+ *
+ * 章节之间以空行拼接：`parseMarkdownTables` 按空行断表，若直接相连，后一节的表头行会被
+ * 当成前一节表格的数据行，列语义整体错位。
+ */
+export function extractSectionAll(content, title) {
+  if (!content || typeof content !== 'string') return [];
   const re = new RegExp(
-    `(?:^|\\n)##\\s*${SECTION_NUMBER_PREFIX}${title}\\s*([\\s\\S]*?)(?=\\n##\\s|$)`,
+    `(?:^|\\n)##\\s*${SECTION_NUMBER_PREFIX}${SECTION_ROUND_PREFIX}${title}[^\\n]*(?:\\n|$)([\\s\\S]*?)(?=\\n##\\s|$)`,
+    'g',
   );
-  const m = content.match(re);
-  return m ? m[1] : null;
+  const bodies = [];
+  for (const m of content.matchAll(re)) bodies.push(m[1] ?? '');
+  return bodies;
+}
+
+/**
+ * 提取指定 `## 标题` 章节正文（容忍编号前缀；标题须位于行首，不匹配正文中的 `##`）。
+ *
+ * **F-11 起改为聚合全部同名/同类（含「第 N 轮」前缀）章节**——判据只可加强不可放松（R12）：
+ * 聚合后旧轮次的行仍在，新轮次的行也进入判据视野，「多写一节就绕过校验」这条路被封掉。
+ * 章节完全不存在时仍返回 `null`（缺章节判据不变）。
+ */
+export function extractSection(content, title) {
+  const bodies = extractSectionAll(content, title);
+  if (bodies.length === 0) return null;
+  return bodies.join('\n\n');
+}
+
+/**
+ * **R30 / F-10**：markdown 表格行 → 单元格数组（唯一权威切分器）。
+ *
+ * 历史实现一律 `line.split('|').slice(1, -1)`：GFM 里单元格内的竖线**必须**写成 `\|`
+ * （例如需求描述 `status=all\|active\|done` 是唯一正确写法），裸切会把它当列分隔符，
+ * 该行列数变多、**后续列整体右移**。实测后果：`parseRequirementP0Ids` 从 `cells[4]` 取
+ * 优先级时取到 `"done"`，`/^P0$/i` 失配 → 一条如实标注 P0 的需求**静默**退出 E2E 必测集合
+ * （`gatePassed: true`、签名有效、零提示）；R18 覆盖矩阵、R14 接口映射、`## 增量范围`
+ * 增量范围五维声明同理受影响。
+ *
+ * 故所有表格判据统一走本函数：先按「未被反斜杠转义的 `|`」切分，再把 `\|` 还原为 `|`
+ * （单元格文本回到人写的原意），并去掉首尾空壳列。
+ *
+ * **运行器侧另有一份同语义实现**（`.claude/scripts/e2e-run-lib.mjs#splitTableRow`，刻意与
+ * `hooks/lib/**` 解耦）。两处口径必须一致；该义务已由 `selftest/r30-table-escape.mjs` 的
+ * 「F-10 一致性」用例机械化（同一批交叉生成语料逐字比对），改本函数务必同步另一份。
+ */
+export function splitTableRow(line) {
+  const raw = String(line ?? '').trim();
+  if (!raw) return [];
+  const cells = [];
+  let cur = '';
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (ch === '\\' && raw[i + 1] === '|') {
+      cur += '|';
+      i += 1;
+      continue;
+    }
+    if (ch === '|') {
+      cells.push(cur);
+      cur = '';
+      continue;
+    }
+    cur += ch;
+  }
+  cells.push(cur);
+  // 规范表格行以 `|` 起止，故首尾各有一个空壳元素；容忍缺尾竖线的写法。
+  if (cells.length && cells[0].trim() === '') cells.shift();
+  if (cells.length && cells[cells.length - 1].trim() === '') cells.pop();
+  return cells.map((c) => c.trim());
+}
+
+/** 分隔行判定（`| --- | :--: |`）；与 splitTableRow 同源，供各判据统一使用 */
+export function isTableSeparatorLine(line) {
+  return /^\|[\s|:-]+\|?$/.test(String(line ?? '').trim());
 }
 
 /**
@@ -716,12 +795,12 @@ export function sectionHasDataRow(content, title) {
   for (const line of body.split('\n')) {
     const t = line.trim();
     if (!t.startsWith('|')) continue;
-    if (/^\|[\s|:-]+\|?$/.test(t)) continue; // 分隔行 | --- | --- |
+    if (isTableSeparatorLine(t)) continue; // 分隔行 | --- | --- |
     tableRows.push(t);
   }
   // 第一条为表头，其余为数据行
   for (let i = 1; i < tableRows.length; i++) {
-    const cells = tableRows[i].split('|').slice(1, -1).map((c) => c.trim());
+    const cells = splitTableRow(tableRows[i]);
     if (cells.some((c) => c.length > 0)) return true;
   }
   return false;
@@ -736,12 +815,12 @@ export function parseMarkdownTables(content) {
   while (i < lines.length) {
     const line = lines[i].trim();
     const next = lines[i + 1]?.trim() ?? '';
-    if (line.startsWith('|') && /^\|[\s|:-]+\|?$/.test(next)) {
-      const headers = line.split('|').slice(1, -1).map((s) => s.trim());
+    if (line.startsWith('|') && isTableSeparatorLine(next)) {
+      const headers = splitTableRow(line);
       let j = i + 2;
       const rows = [];
       while (j < lines.length && lines[j].trim().startsWith('|')) {
-        const cells = lines[j].split('|').slice(1, -1).map((s) => s.trim());
+        const cells = splitTableRow(lines[j]);
         rows.push(cells);
         j += 1;
       }
@@ -885,11 +964,55 @@ export function hasSubstantiveBlockingReason(content) {
  * 解析「## 门禁异常事件」里尚未处理的行（§8.4 `recordFailOpenEvent` 写入的格式）。
  * @returns {{ ts: string, hook: string, context: string, summary: string }[]}
  */
-function parsePendingGateExceptionRows(content) {
+/**
+ * 收集章节内**未被 `parseMarkdownTables` 归入任何表**的 `|` 数据行（F-25 鲁棒化）。
+ *
+ * 场景：写入侧把数据行插到了表头/分隔行之后的空行**之后**，于是它既不接分隔行、
+ * 也不与表头连续，`parseMarkdownTables` 按空行断表后整段丢弃（且它自己不带分隔行，
+ * 不会被识别成新表）。此函数只捞这类孤立行，不改变任何字段级判据。
+ * @param {string} body 章节正文
+ * @param {{headers:string[],rows:string[][]}[]} tables 已解析出的表
+ * @returns {string[][]}
+ */
+function collectOrphanTableRows(body, tables) {
+  const claimed = new Set();
+  for (const table of tables) {
+    claimed.add(table.headers.join(''));
+    for (const row of table.rows) claimed.add(row.join(''));
+  }
+  const orphans = [];
+  for (const raw of body.split('\n')) {
+    const line = raw.trim();
+    if (!line.startsWith('|')) continue;
+    if (isTableSeparatorLine(line)) continue; // 分隔行
+    const cells = splitTableRow(line);
+    if (cells.length === 0) continue;
+    if (claimed.has(cells.join(''))) continue;
+    orphans.push(cells);
+  }
+  return orphans;
+}
+
+/**
+ * 解析「## 门禁异常事件」的**全部**数据行（含已处理），供两个方向的判据复用：
+ * 正向（表格行 → 台账，R35 释放）取其中「待处理」子集；
+ * 反向（台账 → 表格行，F-22 审计对账）须看全部行，否则把一条事件标成「已处理」
+ * 就等于让它从对账视野里消失。
+ * @returns {{ ts: string, hook: string, context: string, summary: string, status: string }[]}
+ */
+function collectGateExceptionRows(content) {
   const body = extractSection(content ?? '', '门禁异常事件');
   if (!body) return [];
-  const pending = [];
-  for (const table of parseMarkdownTables(body)) {
+  const rows = [];
+  // R35 双向鲁棒化（F-25）：本节的数据行**可能与表头被空行隔开**（历史 fail-open 写入即如此），
+  // 而 parseMarkdownTables 按空行断表，会把这些行整段丢弃。这里把「本节内所有 `|` 行」
+  // 都当作候选数据行，表头一律取本节首个真实表头 —— 否则门禁自己写的事件在解析侧凭空消失，
+  // R35 的「机器起源」释放分支恒不可达。判据本身（处理状态/指纹）不放宽。
+  const tables = parseMarkdownTables(body);
+  const headers = tables.find((t) => t.headers.some((h) => /时间|hook/i.test(h)))?.headers ?? null;
+  const orphanRows = headers ? collectOrphanTableRows(body, tables) : [];
+  const scanTargets = orphanRows.length > 0 ? [...tables, { headers, rows: orphanRows }] : tables;
+  for (const table of scanTargets) {
     const idxOf = (re) => table.headers.findIndex((h) => re.test(h));
     const tsIdx = idxOf(/时间/);
     const hookIdx = idxOf(/hook/i);
@@ -899,17 +1022,22 @@ function parsePendingGateExceptionRows(content) {
     for (const row of table.rows) {
       if (!row.some((c) => (c ?? '').trim())) continue;
       if (hookIdx >= 0 && !(row[hookIdx] ?? '').trim()) continue;
-      const status = statusIdx >= 0 ? (row[statusIdx] ?? '').trim() : '';
-      if (statusIdx >= 0 && /已处理|已关闭|已解决/.test(status)) continue;
-      pending.push({
+      rows.push({
         ts: tsIdx >= 0 ? (row[tsIdx] ?? '').trim() : '',
         hook: hookIdx >= 0 ? (row[hookIdx] ?? '').trim() : '',
         context: contextIdx >= 0 ? (row[contextIdx] ?? '').trim() : '',
         summary: summaryIdx >= 0 ? (row[summaryIdx] ?? '').trim() : '',
+        status: statusIdx >= 0 ? (row[statusIdx] ?? '').trim() : '',
       });
     }
   }
-  return pending;
+  return rows;
+}
+
+function parsePendingGateExceptionRows(content) {
+  return collectGateExceptionRows(content).filter(
+    (r) => !/已处理|已关闭|已解决/.test(r.status),
+  );
 }
 
 /** 是否存在**声称**由 Hook 写入、尚未处理的门禁异常事件行（不校验出处，见下方台账判据） */
@@ -950,6 +1078,10 @@ export function recordGateExceptionLedgerEntry({ ts, hook, context, summary } = 
       ts: ts ?? '',
       hook: hook ?? '',
       context: context ?? '',
+      // F-22 反向对账（台账 → 表格行）须能界定「这条事件该出现在哪份 process.md 里」。
+      // 台账是全局单文件、跨流程累积，不记归属就只能拿全部历史条目去比对当前流程，
+      // 任何一次迭代切换都会凭空造出一堆无解的孤儿条目（把审计面做成死锁）。
+      processPath: normalizePath(getActiveProcessPath()),
       recordedAt: new Date().toISOString(),
     });
     ledger.entries = ledger.entries.slice(-GATE_EXCEPTION_LEDGER_MAX);
@@ -1014,12 +1146,74 @@ export function consumeGateExceptionRelease(digest) {
   }
 }
 
+/**
+ * **R35 / F-22 反向对账**：台账里属于当前活跃流程、却在 `## 门禁异常事件` 找不到
+ * 对应行的条目（孤儿条目）。
+ *
+ * 背景：stop 侧原本只做「表格行 → 台账」单向校验（防伪造），于是**删行**这一侧完全无人负责：
+ * 把 Hook 自己写的异常行从 `process.md` 抹掉，一条真实发生过的 fail-open 事件就彻底消失，
+ * 审计面归零。台账受 R29 `runtime-marker` 保护（代理写不了、删不了），故它是这条对账的可信一侧。
+ *
+ * 只统计**本流程**（`processPath` 匹配）且**未被用于释放过**（`releasedAt` 为空）的条目：
+ * - 跨流程/历史迭代的条目不算孤儿——台账是全局累积文件，否则每次切迭代都凭空死锁；
+ * - 已释放的条目其事件已被处置完毕，行被后续整理掉属正常，不再追究；
+ * - 早于台账加 `processPath` 字段的历史条目（无该字段）一律不算孤儿，避免升级即误报。
+ *
+ * @returns {{ digest: string, ts: string, hook: string, context: string }[]}
+ */
+export function findOrphanGateExceptionLedgerEntries(content) {
+  const rows = collectGateExceptionRows(content);
+  const rowDigests = new Set(rows.map((r) => gateExceptionEventDigest(r)));
+  const active = normalizePath(getActiveProcessPath());
+  return readGateExceptionLedger()
+    .entries.filter((e) => e && typeof e.digest === 'string')
+    .filter((e) => typeof e.processPath === 'string' && e.processPath === active)
+    .filter((e) => !e.releasedAt)
+    .filter((e) => !rowDigests.has(e.digest))
+    .map((e) => ({
+      digest: e.digest,
+      ts: e.ts ?? '',
+      hook: e.hook ?? '',
+      context: e.context ?? '',
+    }));
+}
+
+/**
+ * **F-22**：stop 侧的台账 → 表格行反向核对判据。孤儿条目须被追究——门禁自己写过的
+ * fail-open 事件不得被静默抹掉。处置方向是**把行补回**（台账里有时间/Hook/上下文足以复原
+ * 除摘要外的全部字段；摘要须与原文一致才能对上指纹，故正确做法是从 git 历史/备份恢复该行，
+ * 而非猜一个摘要），或由用户裁定该事件确已处置完毕。
+ */
+export function checkGateExceptionLedgerReconciled(content) {
+  const orphans = findOrphanGateExceptionLedgerEntries(content);
+  if (orphans.length === 0) return { ok: true, reason: 'reconciled' };
+  const detail = orphans
+    .map((o) => `${o.ts || '(无时间)'} / ${o.hook || '(无 Hook)'} / ${o.context || '(无上下文)'}`)
+    .join('；');
+  return {
+    ok: false,
+    reason: 'gate-exception-ledger-orphan',
+    orphans,
+    message:
+      `R35/F-22：门禁旁路台账中有 ${orphans.length} 条属于当前流程、尚未处置的门禁异常事件，` +
+      `但 process.md「## 门禁异常事件」里找不到对应行：${detail}。` +
+      '台账由 Hook 独占写入（R29 runtime-marker，代理不可写不可删），故这意味着该事件行被从 process.md 删掉或改写过——' +
+      '一次真实发生过的 fail-open 被抹掉，审计面归零。请由项目经理据台账把事件行**原样**恢复到「## 门禁异常事件」' +
+      '（摘要须与门禁原始写入完全一致才能对上指纹，应从版本历史恢复，不得另编一段摘要），' +
+      '并在处置完成后把该行「处理状态」标为「已处理」。若确认该事件已处置完毕、无需保留行，须由用户本人裁定并留痕。',
+  };
+}
+
 /** 用户决策留痕：`## 用户确认记录` 中与阻塞/待决相关、且体现「问过用户」的行 */
 export function hasBlockingDecisionTrace(content) {
   const body = extractSection(content ?? '', '用户确认记录');
   if (!body) return false;
   const topicRe = /阻塞|blocking|待决|待用户|暂停|挂起|决策/i;
-  const stanceRe = /askquestion|用户|确认|决策|选择|答复|回复|裁决/i;
+  // `askuserquestion` 是 Claude Code 的确认工具名，§8.8 R35 的声明层一直把它列为可接受表态；
+  // 实现原先只认 Cursor 时代的 `askquestion`，而**后者不是前者的子串**（AskUser+Question），
+  // 于是纯英文留痕行会被判为「没问过用户」。属 R12「文档声明强于实现 ⇒ 补实现」，非放松。
+  // 保留 `askquestion`：接入方可能是从 Cursor 版迁移过来的仓库，撤销既有可接受形态才是放松。
+  const stanceRe = /askuserquestion|askquestion|用户|确认|决策|选择|答复|回复|裁决/i;
   for (const raw of body.split('\n')) {
     const line = raw.trim();
     if (!line.startsWith('|')) continue;
@@ -1090,14 +1284,44 @@ export function checkBlockingReleaseEvidence(content) {
       `R35：frontmatter 已置 \`blocking: true\`，但缺少配套证据——${missing.join('；')}。` +
       '阻塞是 stop 门禁的释放阀，不得凭一行 frontmatter 就静默收尾。请由项目经理二者都补齐：' +
       '①在「## 阻塞原因」写明具体阻塞原因 / 待决事项 / 已产出成果物；' +
-      '②用 AskQuestion 请用户就该阻塞做决策，并在「## 用户确认记录」补一行留痕' +
-      '（确认项含「阻塞」或「待决」，摘要含 AskQuestion 或用户决策内容）。' +
+      '②用 AskUserQuestion 请用户就该阻塞做决策，并在「## 用户确认记录」补一行留痕' +
+      '（确认项含「阻塞」或「待决」，摘要含「用户」「确认」「决策」等表明用户已表态的内容）。' +
       '若实际并未阻塞，请把 `blocking` 改回 `false`、「## 阻塞原因」改回裸「无」，并继续推进流程。',
   };
 }
 
 /** 轻量模式（须 R20 用户确认后才生效） */
 export const LITE_WORKFLOW_MODES = Object.freeze(['hotfix', 'docs-only', 'single-task']);
+
+/**
+ * **F-09 / F-17**：当前迭代轮次（frontmatter `iterationRound`，缺省 1）。
+ *
+ * 背景：`workflow-modes.md` 规定 hotfix / single-task「沿用当前活跃 process.md」，而
+ * `## 用户确认记录` / `## 进度列表` / `## 增量范围` 都是**单表累积**结构、没有轮次维度。
+ * 实测后果：第二轮起「上一轮的确认行与上一轮的审核结论足以为本轮背书」——同一套门禁
+ * 越往后越松。故引入显式轮次标识，让「本轮证据」可机械判定。
+ *
+ * 缺省 1 是刻意的：单轮项目（绝大多数）无须填这个字段，判据与历史完全一致；
+ * 只有 PM 把轮次推进到 ≥2 时，才开始要求本轮自己的确认行与审核结论行（只加强，不放松）。
+ */
+export function getIterationRound(content) {
+  const fm = parseProcessFrontmatter(content ?? '');
+  const n = Number.parseInt(String(fm.iterationRound ?? '1').trim(), 10);
+  return Number.isFinite(n) && n >= 1 ? n : 1;
+}
+
+/**
+ * **F-09 / F-17**：文本是否带指向 `round` 的轮次标识（`轮次 2` / `第2轮` / `R2轮` / `round 2`）。
+ * 只认「轮次语义 + 数字」的组合，避免把需求编号 `R-002`、时间 `2026` 之类误判为轮次标识。
+ */
+export function mentionsIterationRound(text, round) {
+  const t = String(text ?? '');
+  const n = String(round);
+  return new RegExp(
+    `(?:第\\s*${n}\\s*[轮次]|[轮次]\\s*[:：]?\\s*${n}(?![0-9])|\\bround\\s*[:：]?\\s*${n}(?![0-9]))`,
+    'i',
+  ).test(t);
+}
 
 /** frontmatter 声明的原始 `workflow_mode`（未做 R20 确认校验） */
 export function getDeclaredWorkflowMode(content) {
@@ -1108,11 +1332,17 @@ export function getDeclaredWorkflowMode(content) {
 /**
  * R20：轻量模式是否已在「## 用户确认记录」留机读确认行。
  * 行须含「工作流模式确认」（或 `workflow_mode 确认`），且含与声明模式匹配的意图词。
- * 仅校验结构关键词，不校验 AskQuestion 语义真实性。
+ * 仅校验结构关键词，不校验 AskUserQuestion 语义真实性。
+ *
+ * **F-17（轮次时效性）**：`iterationRound ≥ 2` 时，确认行还须带本轮轮次标识
+ * （`轮次 2` / `第2轮` / `round 2`）。历史实现只要求「存在一行含意图词」，于是连续两次
+ * hotfix 时**上一轮的确认行直接放行本轮**——用户从未为本轮的模式选择表过态。
+ * 单轮项目（默认 `iterationRound: 1`）判据与历史逐字一致。
  */
 export function hasLiteModeConfirmation(content, mode) {
   const m = mode ?? getDeclaredWorkflowMode(content);
   if (!LITE_WORKFLOW_MODES.includes(m)) return true;
+  const round = getIterationRound(content);
   const body = extractSection(content ?? '', '用户确认记录');
   if (!body) return false;
   const modePatterns = {
@@ -1134,7 +1364,9 @@ export function hasLiteModeConfirmation(content, mode) {
     ) {
       continue;
     }
-    if (/工作流模式确认|workflow_mode\s*确认/i.test(t) && modeRe.test(t)) return true;
+    if (!/工作流模式确认|workflow_mode\s*确认/i.test(t) || !modeRe.test(t)) continue;
+    if (round >= 2 && !mentionsIterationRound(t, round)) continue; // F-17：旧轮次确认行不为本轮背书
+    return true;
   }
   return false;
 }
@@ -1151,10 +1383,11 @@ export function checkLiteModeConfirmed(content) {
   if (hasLiteModeConfirmation(md, declared)) {
     return { ok: true, reason: 'confirmed' };
   }
+  const round = getIterationRound(md);
   return {
     ok: false,
     reason: 'lite-mode-unconfirmed',
-    message: `R20：workflow_mode=${declared} 须经 AskQuestion 用户确认，并在 ## 用户确认记录 留「工作流模式确认」行（含 ${declared} 或对应人话意图），方可享受轻量路径；未确认前按 full 处理，或改回 workflow_mode: full。`,
+    message: `R20：workflow_mode=${declared} 须经 AskUserQuestion 用户确认，并在 ## 用户确认记录 留「工作流模式确认」行（含 ${declared} 或对应人话意图${round >= 2 ? `，且须标注本轮轮次「第${round}轮」——上一轮的确认行不为本轮背书（F-17）` : ''}），方可享受轻量路径；未确认前按 full 处理，或改回 workflow_mode: full。`,
   };
 }
 

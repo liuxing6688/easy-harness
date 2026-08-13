@@ -483,7 +483,7 @@ const HOOK_EVENT_NAME = {
   stop: 'Stop',
 };
 
-export function buildPayload(hook, { role, filePath, command, conversationId, content }) {
+export function buildPayload(hook, { role, filePath, command, conversationId, content, callerRole }) {
   let payload;
   if (hook === 'role') payload = { tool_name: 'Agent', tool_input: { agentType: role } };
   else if (hook === 'write') {
@@ -509,11 +509,15 @@ export function buildPayload(hook, { role, filePath, command, conversationId, co
   // R5 机械化补强测试用：模拟真实 payload 里的 conversation_id 字段
   // （见 workflow-gate-lib.mjs 的 isRootConversationCaller）；未传时保持既有行为不变。
   if (conversationId !== undefined) payload.conversation_id = conversationId;
+
+  // F-01：子代理上下文的 `agent_type`（写文件/Shell 门禁的调用者角色判据）。
+  // 未传时保持既有行为不变——旧用例仍走「活跃角色并集」兜底路径。
+  if (callerRole !== undefined) payload.agent_type = callerRole;
   return payload;
 }
 
 export function runHook({
-  hook, role, filePath, command, processPath, gatedPath, conversationId, content,
+  hook, role, filePath, command, processPath, gatedPath, conversationId, content, callerRole,
 }) {
   const env = { ...process.env };
   delete env.HARNESS_PROCESS_PATH;
@@ -523,7 +527,9 @@ export function runHook({
 
   const res = spawnSync('node', [HOOK_FILES[hook]], {
     cwd: PROJECT_ROOT,
-    input: JSON.stringify(buildPayload(hook, { role, filePath, command, conversationId, content })),
+    input: JSON.stringify(
+      buildPayload(hook, { role, filePath, command, conversationId, content, callerRole }),
+    ),
     encoding: 'utf8',
     env,
   });

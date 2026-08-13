@@ -1,5 +1,11 @@
 # ✅ 移植完成 - 100% 测试通过
 
+> **⚠️ 历史留痕（2026-08-06 移植当时的快照）**：`migration/docs/**` 整个目录记录的是移植
+> 完成那一刻的状态，**其中的命令、文件名与测试计数均已过时**：
+> `test-hooks-lib.mjs` 已不存在（现为 `.claude/scripts/gate-selftest.mjs`），
+> 测试计数 422 现为 **532（selftest）+ 180（scenarios）**。
+> 本目录仅作移植史留痕，**不要照其命令操作**；当前状态见根目录 `INDEX.md` / `README.md`。
+
 ## 🎉 最终结果
 
 ```bash

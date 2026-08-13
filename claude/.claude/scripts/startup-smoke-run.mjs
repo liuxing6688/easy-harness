@@ -35,7 +35,7 @@ import {
   resolveStartupCommand,
 } from './startup-smoke-lib.mjs';
 import { classifyCommandFailure } from './tool-availability-lib.mjs';
-import { attachExecutionProof } from '../hooks/lib/execproof.mjs';
+import { attachExecutionProof, warnIfUnsigned } from '../hooks/lib/execproof.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -228,6 +228,7 @@ function writeResult(result) {
   // R34：落签须在写盘之前，签名覆盖 gatePassed / 两段结果 / capturedAt。
   attachExecutionProof('startup-smoke', result);
   fs.writeFileSync(RESULT_FILE, `${JSON.stringify(result, null, 2)}\n`, 'utf8');
+  warnIfUnsigned(result); // F-03：未落签时给出与 stop 门禁一致的排查方向
 }
 
 async function main() {

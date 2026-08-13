@@ -2,7 +2,7 @@
 
 > **✅ 技术强制版本 - 与 Cursor 对等的强制执行能力**
 > 
-> **🔒 核心保障**：6 个 Hook 脚本在操作执行前自动拦截，模型无法绕过
+> **🔒 核心保障**：7 个 Hook 脚本在操作执行前自动拦截，模型无法绕过
 > 
 > **📊 强制覆盖**：文件写入 + Shell 命令 + Agent 调用 + 回合结束 + 身份追踪
 
@@ -30,13 +30,16 @@
 - **[CLAUDE.md](./CLAUDE.md)** - 顶层规约文档（v2.0 已更新）
 - **[settings.json](./.claude/settings.json)** - Hook 配置（唯一权威源）
 
-### Hook 脚本（6个）
-- [gate-dev-workflow.mjs](./.claude/hooks/gate-dev-workflow.mjs) - 文件写入拦截
+### Hook 脚本（7个，均已在 `.claude/settings.json` 注册）
+- [gate-dev-workflow-enhanced.mjs](./.claude/hooks/gate-dev-workflow-enhanced.mjs) - 文件写入拦截（Write/Edit）
 - [gate-dev-shell.mjs](./.claude/hooks/gate-dev-shell.mjs) - Shell 命令拦截
+- [gate-toolchain-install.mjs](./.claude/hooks/gate-toolchain-install.mjs) - 工具链安装审批
 - [gate-role-sequence.mjs](./.claude/hooks/gate-role-sequence.mjs) - Agent 调用拦截
 - [gate-stop-workflow.mjs](./.claude/hooks/gate-stop-workflow.mjs) - 回合结束拦截
 - [gate-subagent-track.mjs](./.claude/hooks/gate-subagent-track.mjs) - 子代理追踪
-- [session-init.mjs](./.claude/hooks/session-init.mjs) - 会话初始化
+- [session-init-enhanced.mjs](./.claude/hooks/session-init-enhanced.mjs) - 会话初始化（含 auto 模式告警）
+
+> **⚠️ `-enhanced` 才是生效的那份**：`gate-dev-workflow.mjs` 与 `session-init.mjs` 同名非 enhanced 文件仍在盘上，但**未在 `settings.json` 注册、不生效**。修改门禁行为必须改 `-enhanced` 变体，改错文件会「看起来改了却毫无效果」。
 
 ### 配置文件
 - **[harness.config.json](./.claude/harness.config.json)** - 门禁配置
@@ -239,7 +242,7 @@ console.error('[DEBUG] 判定结果:', verdict);
 
 ### 理解 Hook
 1. `.claude/settings.json` - Hook 配置（唯一权威源；`.claude/hooks/hooks.json` 已弃用）
-2. `gate-dev-workflow.mjs` - 文件写入拦截逻辑
+2. `gate-dev-workflow-enhanced.mjs` - 文件写入拦截逻辑
 3. `gate-role-sequence.mjs` - 门禁链验证逻辑
 
 ### 了解流程
@@ -251,7 +254,7 @@ console.error('[DEBUG] 判定结果:', verdict);
 ### ✅ Hook 技术强制的范围
 
 **已自动拦截（无需自律）：**
-- ✅ 顶层写入源码 → `gate-dev-workflow.mjs` deny
+- ✅ 顶层写入源码 → `gate-dev-workflow-enhanced.mjs` deny
 - ✅ 非 DE 写入产品路径 → R21 自动 deny
 - ✅ Shell 写文件到受门禁路径 → R28 自动解析并拦截
 - ✅ 改写门禁配置 → R29 一律 deny

@@ -203,7 +203,7 @@ test('R38: R15 判据报出 lint-tool-unavailable 并给出环境问题处置指
   assert.equal(r.toolUnavailable, true);
   assert.match(r.message, /R38/);
   assert.match(r.message, /勿按|请勿/, '文案须明确劝阻按「整改质量问题」处理');
-  assert.match(r.message, /AskQuestion/, '文案须给出「请用户决策」这条正确路径');
+  assert.match(r.message, /AskUserQuestion/, '文案须给出「请用户决策」这条正确路径');
 });
 
 test('R38: R16 判据同样区分工具不可用', () => {

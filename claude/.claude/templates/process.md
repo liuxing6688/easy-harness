@@ -2,6 +2,7 @@
 phase: requirement
 workflow_mode: full
 iterationType: greenfield
+iterationRound: 1
 blocking: false
 cancelled: false
 cancelledAt: null
@@ -25,6 +26,7 @@ pending_roles: []
 > 技术选型确认示例：`| 技术选型 | YYYY-MM-DD | 确认采用 …；来源 tech-stack-options.md 方案 A |`（R18 机读：确认项或摘要须含「技术选型/技术栈」且含确认语义）。
 > 界面与交互期望确认示例：`| 界面与交互期望 | YYYY-MM-DD | 对标 XX 的三栏调试工作区，左树导航，密度紧凑；不要仪表盘首页 |`；本次确无独立界面期望时写 `| 界面与交互期望 | YYYY-MM-DD | 确认接受组件库默认外观，本版无独立界面期望 |`，无 UI 项目写「本项目为 CLI/纯后端，界面期望不适用」（**R33** 机读，发起 system-architect 前校验；技术选型行**不能**顶替本行）。
 > 轻量模式确认示例：`| 工作流模式确认 | YYYY-MM-DD | 确认采用 workflow_mode: hotfix；AskUserQuestion「修缺陷」 |`（R20 机读；AskUserQuestion 选项须含流程摘要，固定文案见 `workflow-modes.md` R20 表）。
+> **多轮迭代（F-17 机读）**：同一份 `process.md` 复用于第 2 轮及以后时，PM 须把 frontmatter `iterationRound` 递增，且本轮的「工作流模式确认」行须自带轮次标识（如 `| 工作流模式确认（第2轮） | … |`）——上一轮的确认行不为本轮背书，用户须为本轮的模式选择重新表态。同理，`design-problem-list.md` 的「## 审核结论」最新行须标注本轮轮次（**F-09**）。
 > hotfix 无 P0 影响示例：`| hotfix影响面 | YYYY-MM-DD | 受影响用户：…；既有行为：不改变…；回滚条件：…；已比对 requirement-list.md 全部 P0（R-001~R-xxx），本次修复仅涉及…，不改变任何 P0 行为 |`（R9 机读：声明 `hotfix_p0_impact: none` 时确认项或摘要须含「hotfix影响面」「受影响用户」「既有行为」「回滚条件」与 P0 判断依据）。
 > 测试收尾已知缺陷示例：`| 测试收尾已知缺陷 | YYYY-MM-DD | AskUserQuestion 确认接受带已知缺陷交付；未关闭高严重/须 DE 修复项：… |`（测试报告有未关闭高严重或「须 DE 修复」时，PM 收尾前须 AskUserQuestion 留痕，禁止静默非阻塞收尾）。
 > 生产启动冒烟豁免示例：`| 生产启动冒烟豁免 | YYYY-MM-DD | 纯算法库无常驻进程，确认豁免生产启动冒烟 |`（**R32** 双要素之一，另一要素为架构师声明 `startupSmokeApplicability:"n/a"`；**冒烟失败不得**用本豁免掩盖）。
@@ -32,14 +34,17 @@ pending_roles: []
 ## 增量范围
 
 > **仅 `workflow_mode: single-task`（增量迭代档）必填**（**R37** 机读，发起 system-architect / development-engineer 前校验）；其余模式留空表即可，不构成阻塞。
-> 四维必须齐全，「是否涉及」只能填「是」或「否」，「说明」须写实质内容（占位「-」「待补」不算）。
-> **「数据模型 / schema 变更」填「是」时增量档直接失效**，须经 AskUserQuestion 改回 `workflow_mode: full`（schema 改动的兼容面与回滚面超出单轮折叠测试的覆盖能力）。
+> 五维必须齐全，「是否涉及」只能填「是」或「否」，「说明」须写实质内容（占位「-」「待补」不算）。
+> **「需要迁移脚本 / 破坏向后兼容」填「是」时增量档直接失效**，须经 AskUserQuestion 改回 `workflow_mode: full`（迁移与不兼容变更的兼容面与回滚面超出单轮折叠测试的覆盖能力）。
+> **F-08**：「数据形状变更」填「是」而上一条填「否」（如新增可选字段、向后兼容且无迁移）时增量档**仍可用**，代价是须在这两维的「说明」列声明**兼容性回归用例**，并在本轮唯一测试里落地该用例（stop 门禁机读）。声明「无迁移」却实际提交迁移脚本属虚假声明。
 > 填写示例：`| 新增/变更对外接口 | 是 | 新增 GET /api/todos/export 导出接口 |`
+> 兼容性示例：`| 数据形状变更（新增/修改字段、表、集合） | 是 | 待办新增可选字段 dueDate；兼容性回归：历史无该字段的待办仍可读取与更新 |`
 
 | 影响面 | 是否涉及 | 说明 |
 | ------ | -------- | ---- |
 | 新增/变更对外接口 | | |
-| 数据模型 / schema 变更 | | |
+| 数据形状变更（新增/修改字段、表、集合） | | |
+| 需要迁移脚本 / 破坏向后兼容 | | |
 | 新增交互面（页面/命令/入口） | | |
 | 影响的既有行为 | | |
 

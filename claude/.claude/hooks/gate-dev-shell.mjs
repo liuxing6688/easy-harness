@@ -167,7 +167,7 @@ async function main() {
     if (!altStartup.ok) {
       deny(
         `流程门禁（TE 冒烟）：${altStartup.message ?? altStartup.reason}`,
-        `AGENTS.md / test-engineer.md：${altStartup.message ?? altStartup.reason}`,
+        `CLAUDE.md / test-engineer.md：${altStartup.message ?? altStartup.reason}`,
       );
     }
 
@@ -183,11 +183,25 @@ async function main() {
       deny(verdict.userMessage, verdict.agentMessage);
     }
 
+    // F-23：删除机读证据。R15/R16/R17/R32 与批次/最终 E2E 五项硬门禁都以
+    // `test-results/**` 的产物为唯一判据，删除即把「已交卷」静默回滚为「从未跑过」，
+    // 且该目录已被 .gitignore 排除、删除不留 git 痕迹。R34 只防伪造内容、不防删除，
+    // 故本条单独拦。写入仍然放行（运行器必须能落盘）。
+    if (intent.deletesEvidence?.length > 0) {
+      const list = intent.deletesEvidence.map((p) => normalizePath(p)).join('、');
+      deny(
+        `执行证据门禁（R34/F-23）：该命令会删除机读证据「${list}」。test-results/** 是 R15/R16/R17/R32 与 E2E 门禁的唯一判据，删除等于把已完成的验证轮次静默回滚，且该目录不受 git 追踪、删除无痕。`,
+        'CLAUDE.md R34：证据只能由运行器在代理 Shell 通道内重新实跑生成，不得删除或搬移既有产物来「重置」门禁状态。'
+        + '若确需重跑，直接再次执行对应运行器即可——运行器会以本次 nonce 覆盖写入产物（R34 据此判定新鲜度）。'
+        + '若确需清理（如切换项目），须由**用户本人**删除。',
+      );
+    }
+
     // 内联解释器写文件且无法静态解析目标 → 无法套用路径门禁，直接拒绝。
     if (intent.opaqueWrite) {
       deny(
         '流程门禁（R28）：检测到用内联解释器（node -e / python -c 等）执行写文件操作，但无法静态判定写入目标，故无法套用角色↔路径与分派计划门禁。',
-        'AGENTS.md R28：禁止用内联解释器绕过写文件门禁。请改用 Write / Edit 等写文件工具（这样 gate-dev-workflow-enhanced 才能按 R5/R3/R9 裁决），或把目标路径以字面量写进命令以便门禁判定。',
+        'CLAUDE.md R28：禁止用内联解释器绕过写文件门禁。请改用 Write / Edit 等写文件工具（这样 gate-dev-workflow-enhanced 才能按 R5/R3/R9 裁决），或把目标路径以字面量写进命令以便门禁判定。',
       );
     }
 
@@ -195,7 +209,7 @@ async function main() {
     if (intent.opaqueWorktree) {
       ask(
         '工作树改写门禁（R28）：该命令（git apply / reset --hard / stash pop 等）可任意改写工作树，但改动目标无法静态判定，门禁无法代为裁决。请确认这是你期望的操作。',
-        'AGENTS.md R28：此类命令绕开了按路径判定的写入门禁。如目的是修改源码，应由 development-engineer 通过写文件工具完成；确需执行时须经用户批准。',
+        'CLAUDE.md R28：此类命令绕开了按路径判定的写入门禁。如目的是修改源码，应由 development-engineer 通过写文件工具完成；确需执行时须经用户批准。',
       );
     }
 
@@ -204,20 +218,26 @@ async function main() {
       if (isRootConversationCaller(callerId)) {
         deny(
           '流程门禁（R5/R28）：检测到本次写文件类 Shell 命令由顶层代理直接发起（调用方会话与顶层会话一致）。',
-          'AGENTS.md §5.1（R5）：顶层代理不得代行子角色职责。受门禁路径的写入必须在对应子 agent 的 Task 内完成，且不得改用 Shell 绕过写文件门禁（§5.16）。',
+          'CLAUDE.md §5.1（R5）：顶层代理不得代行子角色职责。受门禁路径的写入必须在对应子 agent 的 Agent 调用内完成，且不得改用 Shell 绕过写文件门禁（§5.16）。',
         );
       }
+      // F-01：调用者角色（子代理 payload 的 agent_type）优先于活跃角色并集。
+      const callerRole = input?.agent_type ?? input?.agentType ?? null;
       for (const target of intent.targets) {
-        const roleCheck = checkRolePathPermission(target);
+        const roleCheck = checkRolePathPermission(target, { callerRole });
         if (!roleCheck.ok) {
           deny(
             `流程门禁（R28/R5 角色路径）：Shell 命令将写入「${normalizePath(target)}」——${roleCheck.message ?? roleCheck.reason}`,
-            `AGENTS.md R28：Shell 写文件与 Write 工具适用同一套角色↔路径判据。${roleCheck.message ?? roleCheck.reason}`,
+            `CLAUDE.md R28：Shell 写文件与 Write 工具适用同一套角色↔路径判据。${roleCheck.message ?? roleCheck.reason}`,
           );
         }
       }
-      if (intent.targets.some((t) => isGatedDevPath(t) && !isE2eTestPath(t))) {
-        assertDevGateOrDeny();
+      // 与写文件通道同源（F-18/F-19）：通用前置对 e2e/** 也执行，仅 DE 专属前置按 e2e 跳过。
+      const gatedTargets = intent.targets.filter((t) => isGatedDevPath(t));
+      if (gatedTargets.length > 0) {
+        assertDevGateOrDeny({
+          includeDeSpecific: gatedTargets.some((t) => !isE2eTestPath(t)),
+        });
       }
     }
 
@@ -230,8 +250,8 @@ async function main() {
     // R5：顶层代理直接执行受门禁 Shell（同写文件通道的顶层代写拦截）。
     if (isRootConversationCaller(callerId)) {
       deny(
-        '流程门禁（R5，机械化补强）：检测到本次 Shell 命令由顶层代理直接发起（调用方会话与顶层会话一致），而非通过 Task 派发的子代理。受门禁 Shell 操作必须由对应子 agent（如 development-engineer / test-engineer）在 Task 内执行。',
-        'AGENTS.md §5.1（R5）：顶层代理不得代行子角色职责，禁止直接执行受门禁 Shell 命令。请先经项目经理分派，再以 Task 发起对应子 agent 执行。',
+        '流程门禁（R5，机械化补强）：检测到本次 Shell 命令由顶层代理直接发起（调用方会话与顶层会话一致），而非通过 Agent 派发的子代理。受门禁 Shell 操作必须由对应子 agent（如 development-engineer / test-engineer）在 Agent 调用内执行。',
+        'CLAUDE.md §5.1（R5）：顶层代理不得代行子角色职责，禁止直接执行受门禁 Shell 命令。请先经项目经理分派，再以 Agent 工具发起对应子 agent 执行。',
       );
     }
 

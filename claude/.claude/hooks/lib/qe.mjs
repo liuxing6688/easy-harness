@@ -18,6 +18,8 @@ import {
   extractSection,
   parseMarkdownTables,
   sectionHasDataRow,
+  splitTableRow,
+  isTableSeparatorLine,
   hasUnresolvedIssues,
   ROLE_ALIASES,
   readTextFileSafe,
@@ -34,6 +36,7 @@ import {
 } from './iteration.mjs';
 import { verifyExecutionProof, checkArtifactFreshness } from './execproof.mjs';
 import { evaluateStartupSmokeResult } from '../../scripts/startup-smoke-lib.mjs';
+import { parseRequirementP0Ids, parseCoverageWaivers } from '../../scripts/e2e-run-lib.mjs';
 import { readRecentlyDispatchedRoles } from './identity.mjs';
 import {
   extractTaskCode
@@ -190,15 +193,62 @@ export function checkStartupSmoke(content) {
  * 抽出成独立判据后，`parseWorkflowState` 不再直接读 `gatePassed`，与 R15/R16/R32 同构。
  * @param {'batch'|'final'} scope
  */
+/**
+ * **F-06**（2026-08-11 审核修复）：Hook 侧不得只读 `gatePassed`。
+ *
+ * 运行器已改为「缺省回落 requirement-list.md、解析不到 P0 即报错退出」，但那只堵住了
+ * 生成侧；产物是普通 JSON，一份历史遗留或从别处拷来的 `requiredIds: []` 产物仍能带着
+ * 有效签名通过 R34（它确实是真跑出来的，只是 required 集合是空的）。故门禁侧独立复核：
+ * `requiredIds` 须非空，且 `--scope=final` 时须**等于** requirement-list 的 P0 全集
+ * （允许 `coverage-waivers.json` 已豁免项缺席）。这是 §8.3 判据的机读兜底，非新增约束。
+ *
+ * @returns {null | {reason: string}} null 表示本条复核通过
+ */
+function verifyE2eRequiredIds(scope, artifact) {
+  const ids = Array.isArray(artifact.requiredIds) ? artifact.requiredIds.filter(Boolean) : [];
+  if (ids.length === 0) {
+    return { reason: `e2e-${scope}-required-ids-empty` };
+  }
+  if (scope !== 'final') return null;
+
+  const listPath = path.join(getActiveDocsBase(), 'requirement/requirement-list.md');
+  const content = readTextFileSafe(listPath);
+  if (!content) return null; // 缺 requirement-list 由 R3 四件成果物判据兜底，不在此处重复拒绝
+
+  // 豁免文件查找顺序须与 `e2e-run.mjs` 逐字一致，否则门禁侧会把已豁免项判成缺失。
+  const waiversJson =
+    readTextFileSafe(path.join(PROJECT_ROOT, 'e2e/coverage-waivers.json')) ||
+    readTextFileSafe(path.join(PROJECT_ROOT, 'e2e/specs/coverage-waivers.json'));
+  const waived = waiversJson ? parseCoverageWaivers(waiversJson) : new Set();
+  const expected = parseRequirementP0Ids(content).filter((id) => !waived.has(id));
+  const present = new Set(ids);
+  const missing = expected.filter((id) => !present.has(id));
+  if (missing.length > 0) {
+    return { reason: `e2e-final-required-ids-incomplete:${missing.join(',')}` };
+  }
+  return null;
+}
+
 export function checkE2eGate(scope) {
-  return evaluateGateArtifact({
+  const artifact = readE2eResult(scope);
+  const verdict = evaluateGateArtifact({
     kind: scope === 'final' ? 'e2e-final' : 'e2e-batch',
-    artifact: readE2eResult(scope),
+    artifact,
     missingReason: `no-e2e-${scope}-result`,
     unavailableReason: `e2e-${scope}-tool-unavailable`,
-    isPassed: (a) => a.gatePassed === true,
+    // F-14（2026-08-11 审核修复）：Hook 侧不再只信 `gatePassed`，额外兜底
+    // `playwrightExitCode`。运行器已把退出码并入 `gatePassed`（e2e-run-lib.mjs），
+    // 但旧产物或被改写的产物可能带 `gatePassed:true` + 非 0 退出码，此处独立复核。
+    isPassed: (a) =>
+      a.gatePassed === true &&
+      (a.playwrightExitCode === null || a.playwrightExitCode === undefined || a.playwrightExitCode === 0),
     failedReason: `e2e-${scope}-not-passed`,
   });
+  if (!verdict.passed || !artifact) return verdict;
+
+  const idsProblem = verifyE2eRequiredIds(scope, artifact);
+  if (idsProblem) return { passed: false, reason: idsProblem.reason };
+  return verdict;
 }
 
 /**
@@ -648,6 +698,40 @@ export function checkBatchApiTestReport() {
   return { ok: false, reason: 'no-api-test-report-section' };
 }
 
+/**
+ * **R37/F-08**：走「数据形状变更：是 + 需要迁移/破坏兼容：否」这条增量档路径时，
+ * 折叠通道的唯一测试轮次须落地**兼容性回归用例**的执行记录。
+ *
+ * 这是 F-08 放松 schema 硬禁用所换取的新增判据（见 `iteration.mjs`
+ * `INCREMENT_SCOPE_DIMENSIONS` 注释与 `mechanical-gates.md` §8.5 留痕）：声明侧由
+ * `checkIncrementScopeDeclared` 校验（说明列须写明用例），执行侧由本函数校验。
+ * 与 R14 同构——扫活跃 docs 子树 `test/` 下所有 `*.md`，任一报告含「兼容性回归」表格
+ * 数据行即通过；只有散文提及而无数据行不算（同 `sectionHasDataRow` 的取向：要用例，不要口号）。
+ */
+export function checkIncrementCompatRegressionReport() {
+  const testDir = path.join(getActiveDocsBase(), 'test');
+  if (!fs.existsSync(testDir)) return { ok: false, reason: 'missing-test-dir' };
+  let files;
+  try {
+    files = fs.readdirSync(testDir).filter((f) => f.toLowerCase().endsWith('.md'));
+  } catch {
+    return { ok: false, reason: 'test-dir-unreadable' };
+  }
+  if (files.length === 0) return { ok: false, reason: 'no-test-report' };
+  for (const f of files) {
+    const content = readTextFileSafe(path.join(testDir, f)) ?? ''; // R30
+    for (const line of content.split('\n')) {
+      const t = line.trim();
+      if (!t.startsWith('|') || isTableSeparatorLine(t)) continue;
+      if (!/兼容性?回归/.test(t)) continue;
+      // 表头行（「场景类型 | … | 是否通过」之类）不算用例；要求该行有实质单元格内容。
+      const cells = splitTableRow(t).filter((c) => c);
+      if (cells.length >= 2) return { ok: true, reason: 'checked' };
+    }
+  }
+  return { ok: false, reason: 'no-compat-regression-case' };
+}
+
 /** R13：质量报告是否无未解决高/中问题、且质量判定通过（供发起 test-engineer 前机械校验） */
 export function checkQeClean() {
   const docsBase = getActiveDocsBase();
@@ -704,7 +788,7 @@ export const LINT_FAILURE_GUIDANCE = Object.freeze({
   'no-lint-command':
     'lint 门禁未通过的原因是**框架探测不到本项目的默认 lint 命令**（reason=no-lint-command），不是代码有违规——重跑 `lint-run.mjs` 不会改变结果。' +
     '请查看 test-results/qe/.lint-result.json 的 `remediation` 字段（含探测到的技术栈、monorepo 子项目清单与可直接粘贴的配置片段），' +
-    '由 project-manager 标 blocking 并用 AskQuestion 请用户在两条路径中决策：' +
+    '由 project-manager 标 blocking 并用 AskUserQuestion 请用户在两条路径中决策：' +
     '①由**用户本人**在 `.claude/harness.config.json` 写 `qe.commands.lint` 覆盖（该文件受 R29 锁定，system-architect 与其它任何代理都不得代写，只能呈现片段请用户粘贴）；' +
     '②确无可用 linter 时走双要素豁免（gated-artifacts.json 声明 lintApplicability:"n/a" + process.md「## 用户确认记录」补一行编程规范豁免确认）。' +
     '「框架没有默认命令」本身不是豁免理由，代理不得自行选择路径，也不得据此推进测试或宣告完成。',

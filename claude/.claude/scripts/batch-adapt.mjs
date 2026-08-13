@@ -32,7 +32,7 @@ const adaptations = {
 > **Claude Code 适配说明**：
 > - 使用 \`Agent\` 工具替代 Cursor 的 \`Task\` 工具
 > - 使用 \`AskUserQuestion\` 替代 \`AskQuestion\`
-> - 由于缺乏 Hook 机制，需要主动检查和自检
+> - Hook 已技术强制拦截（\`.claude/settings.json\` 注册）；机械层判不到的部分（阶段顺序、确认真实性）仍须主动自检
 `,
 
   // 模型映射

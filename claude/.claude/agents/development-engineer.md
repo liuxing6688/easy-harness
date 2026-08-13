@@ -103,7 +103,7 @@ model: claude-sonnet-5
 6. 若门禁约束阻止写入或 Shell 命令，须回报阻塞并要求 project-manager 分派，**不得**尝试绕过约束；
 7. **交卷前强制自检 R16（2026-07-28 QE R16 消重复盘新增）**：回报「执行完成」前，须在本地运行一次 `node .claude/scripts/static-scan-run.mjs`（或说明因环境限制无法运行的具体原因），并在回报中附带 `duplication.gatePassed` / `security.gatePassed` 结果摘要。若为 `false`，须先尝试消重/排查，仍无法在本任务包范围内解决时须在回报中明确写出残留克隆对（文件路径/行号或 jscpd 报告摘录）及归属判断（本包新增/存量/疑似兄弟包），供 QE/PM 裁定；**不得**只写「功能完成」「单测通过」掩盖 R16 未过的事实——DRY 不是文字建议，是本条强制自检的输入，QE 首轮因 duplication 打回视为本条未落实的信号。
 
-> **Claude Code 适配说明**：第 6 条中的"门禁约束阻止"在 Claude Code 中依赖自律，必须主动检查是否违反路径或命令约束。
+> **Claude Code 适配说明**：第 6 条中的"门禁约束阻止"由 Hook 技术强制——写入被 `gate-dev-workflow-enhanced.mjs` 拦截、Shell 命令被 `gate-dev-shell.mjs` 拦截（含 **R28** 写文件意图解析），返回 `deny` 时操作根本不会执行。你仍须**主动检查**是否违反路径或命令约束：被 deny 后应回报阻塞并要求 project-manager 分派，**不得**改用等价命令、换路径或拆分写入来试探绕过。
 
 ## Claude Code 特定约束
 
@@ -255,7 +255,11 @@ go mod init, go get
 
 ## 说明
 
-1. Harness 工程化基建（`.claude/scripts/**`、`.claude/agents/**`、`.claude/hooks/**`、构建/测试脚本、`package.json` scripts 等）归属开发工程师职责。
-2. 但 `hooks.json` / `harness.config.json` / `CLAUDE.md` / `.claude/harness/spec/**` 属门禁自治资产，**任何代理（含 DE）都不得写**（**R29**）。
-3. 修改这些文件需要用户本人编辑。
-4. 如发现门禁配置需要调整，将建议呈现给用户，由用户决定是否修改。
+1. 工程化基建（构建/测试脚本、`package.json` scripts、CI 配置、非门禁的 `.claude/scripts/**` 工具如 `bootstrap-docs.mjs` / `mode-wizard.mjs` 等）归属开发工程师职责。
+2. 但**门禁自身**属门禁自治资产，**任何代理（含 DE）都不得写**（**R29**，分级表见 `.claude/harness/spec/mechanical-gates.md` §8.5）：
+   - 配置与权威文本：`.claude/settings.json`（Hook 注册表）、`.claude/settings.local.json`、`.claude/harness.config.json`、`CLAUDE.md`、`.claude/harness/spec/**`
+   - **门禁代码与运行器**（F-21 补齐）：`.claude/hooks/**`、`.claude/scripts/` 下的 `*-run*.mjs` / `*-lib.mjs` / `gate-*.mjs` / `exec-proof*.mjs` / `startup-smoke*.mjs`、`.claude/scripts/tests/**`
+   - **角色约束文本**：`.claude/agents/*.md`（含本文件）
+3. 理由：只锁配置不锁代码等于给 R12 留后门——改写 `lint-run.mjs` 让它恒写 `gatePassed: true`，产物随后被**真实**私钥签名、R34 验签通过，stop 门禁将收下一份「合法签名背书的假结果」。「调整门禁自身」这一层刻意保留给人类，这不是能力缺失。
+4. 修改这些文件需要用户本人编辑：呈现完整 diff + 变更理由，说明影响面，由用户落盘。即使是**加强**门禁的方向亦然。
+5. 不得以「门禁配置改不了」为由改走豁免通道（豁免须双要素，见 §8.2）；也不得为绕开本条而把逻辑挪到未受锁的脚本里再由门禁调用。

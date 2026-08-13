@@ -4,10 +4,11 @@
 
 ## 编写约定（与 `test-engineer.md` / `.claude/harness/spec/mechanical-gates.md` §8.3 保持一致）
 
-1. **仅需支持 Chrome 内核浏览器**：`playwright.config.ts` 仅声明 `chromium` project，无需（也不应）新增 Firefox / WebKit project。
+0. **`playwright.config.ts` 归 development-engineer，不归本角色**：该文件在项目根，属受门禁产品源码（§8.5 R6 `testConfigs`），**test-engineer 写它会被 R5/R21 直接 deny**。模板已在项目根自带一份可用配置；需要调整（改端口、改 webServer 启动命令、加 project 等）时，须由 PM 回派 **development-engineer**，不得由 TE 自行创建或改写。配置须满足的三条硬约束（`outputDir` 不得是 `test-results/qe`、`test-results/e2e`、`test-results/recon` 的祖先或自身、JSON reporter 固定 `test-results/e2e/pw-report.json`、仅 `chromium` project）见 `.claude/harness/spec/mechanical-gates.md` §8.3「Playwright 配置约束」。其中 `outputDir` 一条**由机械层强制**：`e2e-run.mjs` 在跑 Playwright 之前自检，违规（含**未声明**——默认值正是 `test-results/`）直接判 `gatePassed=false` 退出。
+1. **仅需支持 Chrome 内核浏览器**：配置仅声明 `chromium` project，无需（也不应）新增 Firefox / WebKit project。
 2. **`[R-xxx]` 追溯标签**：每条用例标题须以 `[R-xxx]` 开头，对应 `requirement-list.md` 中的需求编号，供 `e2e-run.mjs` 统计覆盖率。
 3. **交互行为级断言**：断言须到具体交互结果（值/时机/落盘等），不得仅断言「页面加载成功」或「HTTP 200」。涉及业务数据写入时，存储对账机读与留痕见 **`.claude/harness/spec/mechanical-gates.md` §8.3 R17** / `checkBatchStorageReconciliationReport`（报告「## 存储对账记录」场景类型=E2E；介质含数据库/文件/缓存/对象存储等）。
-4. 如需跨用例复用的辅助函数、fixture 或运行前置（`globalSetup` / `test.beforeAll`），按当前项目技术栈自建于 `e2e/helpers/`、`e2e/fixtures/` 等目录，并在 `playwright.config.ts` 中声明；harness 模板不预置这些目录，避免绑定到某一具体产品的数据结构。
+4. 如需跨用例复用的辅助函数、fixture 或运行前置（`globalSetup` / `test.beforeAll`），按当前项目技术栈自建于 `e2e/helpers/`、`e2e/fixtures/` 等目录（这些目录在 `e2e/**` 下，属 R23 的 test-engineer 可写范围）；**但把它们挂进 `playwright.config.ts` 的那一步须由 development-engineer 执行**（见第 0 条）。harness 模板不预置这些目录，避免绑定到某一具体产品的数据结构。
 5. 如需登记已解释的覆盖率豁免，创建 `e2e/coverage-waivers.json`（可选，格式见 `test-engineer.md`）。
 
 ## 执行

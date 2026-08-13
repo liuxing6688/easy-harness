@@ -268,7 +268,7 @@ async function main() {
           input,
           'deny',
           '流程门禁（R10）：该 process.md 已被用户取消终止（不可逆），禁止任何后续写入/修改/删除。',
-          'AGENTS.md R10：cancelled: true 的 process.md 永久冻结，任何角色（含 project-manager）均不得再修改。如需继续工作，请发起新的流程/迭代（新的 process.md）。',
+          'CLAUDE.md R10：cancelled: true 的 process.md 永久冻结，任何角色（含 project-manager）均不得再修改。如需继续工作，请发起新的流程/迭代（新的 process.md）。',
           'R10',
         );
       }
@@ -313,31 +313,41 @@ async function main() {
       emitHardened(
         input,
         'deny',
-        '流程门禁（R5，机械化补强）：检测到本次写入由顶层代理直接发起（调用者身份与顶层会话一致），而非通过 Task 派发的子代理。受门禁路径必须由对应子 agent 在 Task 内执行。',
-        'AGENTS.md §5.1（R5）：顶层代理不得代行子角色职责，禁止直接编写受门禁路径。请先经项目经理分派，再以 Task 发起对应子 agent 完成该写入。',
+        '流程门禁（R5，机械化补强）：检测到本次写入由顶层代理直接发起（调用者身份与顶层会话一致），而非通过 Agent 派发的子代理。受门禁路径必须由对应子 agent 在 Agent 调用内执行。',
+        'CLAUDE.md §5.1（R5）：顶层代理不得代行子角色职责，禁止直接编写受门禁路径。请先经项目经理分派，再以 Agent 工具发起对应子 agent 完成该写入。',
         'R5',
       );
     }
 
     // R5：角色↔路径匹配（含 docs 成果物；源码须 DE 活跃）。
+    // F-01（2026-08-11 审核修复）：传入调用者角色——payload 的 agent_type 在子代理上下文里可用，
+    // 历史实现从未消费，导致判据退化为「期望角色在活跃并集里即放行」而对文档成果物实际失效。
+    const callerRole = input?.agent_type ?? input?.agentType ?? null;
     for (const filePath of gatedPaths) {
-      const roleCheck = checkRolePathPermission(filePath);
+      const roleCheck = checkRolePathPermission(filePath, { callerRole });
       if (!roleCheck.ok) {
         const detail = roleCheck.message ?? roleCheck.reason;
         emitHardened(
           input,
           'deny',
           `流程门禁（R5，角色路径）：${detail}`,
-          `AGENTS.md §5.1（R5）：${detail}。请确认 process.md 分派/进度中的活跃角色与写入路径匹配，并由对应子 agent 执行。`,
+          `CLAUDE.md §5.1（R5）：${detail}。请确认 process.md 分派/进度中的活跃角色与写入路径匹配，并由对应子 agent 执行。`,
           'R21',
         );
       }
     }
 
-    // 源码 / 构建产物等仍走分派计划 + R3/R9 门禁；e2e（期望 TE）与纯文档成果物不要求
-    // DE 分派计划。命中时 assertDevGateOrDeny 内部自行 deny 并退出（形状同源）。
-    if (filePaths.some((filePath) => isGatedDevPath(filePath) && !isE2eTestPath(filePath))) {
-      assertDevGateOrDeny();
+    // 受门禁开发路径的流程前置。命中时 assertDevGateOrDeny 内部自行 deny 并退出（形状同源）。
+    //
+    // 分两层（2026-08-11 审核修复 F-18/F-19）：`e2e/**` 期望 TE、不经 DE 开发分派，故只跳过
+    // **DE 专属**前置（分派计划 / R37 增量前置 / R9 hotfix 前置）；R10 取消冻结、docs-only
+    // 禁写源码、R3 四件成果物、blocking 属**通用**前置，对 e2e 同样成立。历史实现把两层
+    // 合成一个判断，导致 e2e/** 上 R10「永久冻结」与 blocking 双双失效。
+    const gatedDevPaths = filePaths.filter((filePath) => isGatedDevPath(filePath));
+    if (gatedDevPaths.length > 0) {
+      assertDevGateOrDeny({
+        includeDeSpecific: gatedDevPaths.some((filePath) => !isE2eTestPath(filePath)),
+      });
     }
 
     emit('allow');

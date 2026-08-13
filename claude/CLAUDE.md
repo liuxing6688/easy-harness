@@ -49,10 +49,12 @@
 
 **元约束（常驻）**：禁止绕过 Hook（含 **R28** Shell 写文件与 **R29** 改写门禁自身两条路径）；豁免须**双要素**（`gated-artifacts.json` 声明 + `process.md` 用户确认），仅一项不生效；细则表见 `mechanical-gates.md` §8.2。
 
-> **Claude Code 技术强制**：
-> - **PreToolUse Hooks**：`gate-dev-workflow.mjs`（文件写入）、`gate-dev-shell.mjs`（Shell 命令）、`gate-role-sequence.mjs`（Agent 调用）在操作执行前自动拦截
-> - **Stop Hook**：`gate-stop-workflow.mjs` 阻止回合结束如果流程未完成
+> **Claude Code 技术强制**（注册的**唯一权威源**是 `.claude/settings.json`；下列即当前注册的 7 个脚本）：
+> - **PreToolUse Hooks**：`gate-dev-workflow-enhanced.mjs`（Write/Edit）、`gate-dev-shell.mjs` 与 `gate-toolchain-install.mjs`（Bash/PowerShell）、`gate-role-sequence.mjs`（Agent 调用）在操作执行前自动拦截
+> - **Stop Hook**：`gate-stop-workflow.mjs` 在流程未完成时阻止回合结束
 > - **SubagentStart Hook**：`gate-subagent-track.mjs` 记录身份用于 R5 验证
+> - **SessionStart Hook**：`session-init-enhanced.mjs` 会话初始化（含 auto 权限模式告警）
+> - **注意**：同名非 `-enhanced` 文件（`gate-dev-workflow.mjs` / `session-init.mjs`）仍在盘上但**未注册、不生效**；改门禁行为须改 `-enhanced` 那份
 > - **技术保障**：Hook 返回 `permissionDecision: "deny"` 直接阻止操作，模型无法绕过
 > - **实现细节**：Claude Code 使用 JSON 配置 + Shell 脚本实现 hooks，与 Cursor 语法不同但功能等价
 > - **官方文档**：https://code.claude.com/docs/en/hooks
@@ -71,8 +73,8 @@
 | ---- | ---- | ---- |
 | `full` | 默认；未确认的轻量声明 fail-safe 为本模式 | 需求 → 架构 → 设计审核 → 开发 → QE → 测试 |
 | `hotfix` | **R20** 确认后 | 跳过 RA/SA（须已有设计或按 R9 补最小热修设计）；DE → QE → 测试；测试按 **R11** 折叠为单次通道 |
-| `docs-only` | **R20** 确认后 | 仅 `docs/**/*.md`；Hook 拒绝源码写入 |
-| `single-task` | **R20** 确认后 | **增量迭代档（R37）**：在**已有基线设计**的项目上加一个功能增量。**只省**测试轮次（折叠为单轮集成测试+E2E）与 R26 技术选型确认，**其余判据一条不减**——尤须注意 **R14/R17 并入折叠通道**，不得照搬 hotfix R11 的跳过。**前置**：基线 `detail-design-spec.md` + `process.md`「## 增量范围」四维声明；**涉及 schema 变更时本档失效**，须改走 `full` |
+| `docs-only` | **R20** 确认后 | 禁止写源码与构建产物（含 `e2e/**`）；文档与仓库元文件可改 |
+| `single-task` | **R20** 确认后 | **增量迭代档（R37）**：在**已有基线设计**的项目上加一个功能增量。**只省**测试轮次（折叠为单轮集成测试+E2E）与 R26 技术选型确认，**其余判据一条不减**——尤须注意 **R14/R17 并入折叠通道**，不得照搬 hotfix R11 的跳过。**前置**：基线 `detail-design-spec.md` + `process.md`「## 增量范围」**五维**声明；**需要迁移脚本或破坏向后兼容时本档失效**，须改走 `full`；数据形状变而兼容未破（如新增可选字段）仍可用，代价是须声明并落地兼容性回归用例（**F-08**） |
 
 须写入活跃 `process.md` frontmatter 的 `workflow_mode`。轻量模式**禁止**仅凭口令关键词或 PM 单方面落盘生效：须 AskUserQuestion 确认（选项含各模式**流程摘要**）+ `## 用户确认记录`「工作流模式确认」机读行（**R20**）。**分诊表、AskUserQuestion 固定选项文案、R2、R20、路径、R10** 见 `.claude/harness/spec/workflow-modes.md` 与 `project-manager.md`。
 
@@ -88,7 +90,7 @@
 
 | # | 禁令 / 义务 | 要点 |
 | - | ------------ | ---- |
-| 1 | **不得代行子角色职责（R5）** | 禁止直接编写业务代码/设计/需求/测试等成果物，禁止初始化/装依赖等开发行为，须经对应子 agent。`.claude/scripts\|agents\|hooks/**`、构建/测试脚本、`package.json` scripts 等 harness 基建归 **development-engineer**；`hooks.json` / `harness.config.json` 属门禁自治资产，**任何代理（含 DE）都不得写**（**R29**）。受门禁路径写入**必须**在对应子 agent 上下文内；**即使 `## 当前分派计划` 有效，顶层也不得亲自写**——计划有效仅代表可派发子 agent。 |
+| 1 | **不得代行子角色职责（R5）** | 禁止直接编写业务代码/设计/需求/测试等成果物，禁止初始化/装依赖等开发行为，须经对应子 agent。构建/测试脚本、`package.json` scripts 等工程化基建归 **development-engineer**；但**门禁自身**——`settings.json`（Hook 注册表）/ `harness.config.json` / `CLAUDE.md` / `.claude/harness/spec/**` / `.claude/hooks/**` / `.claude/scripts/` 下的门禁运行器与自测 / `.claude/agents/*.md`——属门禁自治资产，**任何代理（含 DE）都不得写**（**R29**，分级见 `mechanical-gates.md` §8.5）：改写运行器即可产出「恒通过」且被真实私钥签名的产物，锁配置而不锁代码等于给 R12 留后门。须变更时呈现完整 diff + 理由，由**用户本人**落盘。受门禁路径写入**必须**在对应子 agent 上下文内；**即使 `## 当前分派计划` 有效，顶层也不得亲自写**——计划有效仅代表可派发子 agent。 |
 | 2 | **不得代行项目经理分派** | 禁止自行决定派谁/派什么/是否并行；须先经 PM 写入 `process.md`，再仅依 `## 当前分派计划` 与 `## 待派发角色列表` 发起 Agent。 |
 | 3 | **不得越权改写角色内部流程** | Agent `prompt` 禁止预先指定技术栈、禁止「直接创建需求/设计/代码」等绕过角色约束的指令；**严禁附加 `model` 参数**（除非角色定义文件明确指定）。禁止：建议 `workflow_mode`/`iterationType`；要求非 SA 产出设计；指定任务包拆分/分派数量。仅允许：用户目标原文、路径、已有成果物、用户已确认摘要、PM 已写入的分派计划。 |
 | 4 | **必须尊重阻塞** | `blocking: true` 或进度含「阻塞」时本轮结束等用户，不得同轮续派其他角色。 |
@@ -108,8 +110,9 @@
 Claude Code 通过 Hook 机制自动验证流程完整性：
 
 **自动拦截点**：
-- **gate-dev-workflow.mjs** - 拦截违规文件写入（R5/R10/R29/R21/R3）
-- **gate-dev-shell.mjs** - 拦截违规 Shell 命令（R28/R22/工具链）
+- **gate-dev-workflow-enhanced.mjs** - 拦截违规文件写入（R5/R10/R29/R21/R3）
+- **gate-dev-shell.mjs** - 拦截违规 Shell 命令（R28/R22）
+- **gate-toolchain-install.mjs** - 拦截未经批准的工具链安装
 - **gate-role-sequence.mjs** - 拦截违规 Agent 调用（R13/R20/R26/R27/R33）
 - **gate-stop-workflow.mjs** - 阻止未完成时收尾（R15/R16/R32/R35/R14/R17）
 
@@ -140,10 +143,10 @@ Claude Code 通过 Hook 机制自动验证流程完整性：
 | 测试工程师（批次） | 本批次 QE 全通过；lint（**R15**）与静态扫描（**R16**）均通过 | 无阻塞 |
 | 测试工程师（最终） | 全部任务包开发+QE+各批次集成测试完成（含批次 E2E、**R14**、**R17**、**R32**） | 无阻塞 |
 
-> **Claude Code 适配说明**：由于没有自动化 Hook 校验，这些前置条件需要：
-> 1. 在项目经理角色中明确检查
-> 2. 在顶层代理的自检中验证
-> 3. 提供验证脚本供主动调用
+> **Claude Code 适配说明**：上表**客观可判定**的部分已由 `gate-role-sequence.mjs` 在 Agent 发起前机械拦截（**R13**），不再依赖自律。但机械层只判「成果物是否存在且有效」，以下仍须叠加执行——**不得**以「Hook 会拦」为由省略：
+> 1. 项目经理在分派前明确核对门禁链（Hook 不校验 `phase` 的阶段序关系，**R8** 的阶段顺序维度仍由 §5.8 文字约束承担，见 `mechanical-gates.md` §8.1）
+> 2. 顶层代理按 §5.15 做回合自检（stop 预算 `loop_limit` 耗尽后它是唯一仍起作用的约束）
+> 3. 用户确认类前置（**R20/R26/R27/R33**）须真实使用 `AskUserQuestion`，Hook 只验确认行存在（§3 能力边界 1）
 
 **模式链**：`hotfix` = PM →（**R20**）→（R9）→ DE → QE → 测试（R11 单次通道，不省 QE/测试）；`docs-only` =（**R20**）文档角色按需，无 DE/QE/测试。
 
@@ -192,7 +195,7 @@ Claude Code 通过 Hook 机制自动验证流程完整性：
 
 5. **文件操作门禁（技术强制）**
    - Cursor: `gate-dev-workflow` Hook 拦截 Write/Edit 等操作
-   - Claude Code: **完全支持** - `gate-dev-workflow.mjs` PreToolUse Hook 拦截 Write/Edit/Delete 等操作
+   - Claude Code: **完全支持** - `gate-dev-workflow-enhanced.mjs` PreToolUse Hook 拦截 Write/Edit 等操作
    - **技术强制**：返回 `permissionDecision: "deny"` 直接阻止违规操作，模型无法绕过
 
 6. **Shell 命令门禁（技术强制）**
@@ -204,7 +207,7 @@ Claude Code 通过 Hook 机制自动验证流程完整性：
 
 **✅ 已实现与 Cursor 对等的强制执行：**
 
-1. **自动拦截机制**：6 个 Hook 脚本在操作执行前技术强制拦截
+1. **自动拦截机制**：7 个 Hook 脚本（6 个门禁 + 1 个会话初始化）在操作执行前技术强制拦截
 2. **多层防护**：PreToolUse（文件/Shell/Agent）+ Stop（回合结束）+ SubagentStart（身份追踪）
 3. **无法绕过**：Hook 返回 deny 时操作被引擎层直接阻止，不依赖模型自律
 4. **执行证明**：R34 通过 ed25519 签名验证测试产物真实性

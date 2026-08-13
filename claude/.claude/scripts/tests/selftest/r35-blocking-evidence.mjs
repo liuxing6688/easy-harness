@@ -92,6 +92,47 @@ test('R35: 用户决策留痕行须同时含阻塞类主题与「问过用户」
   assert.equal(hasBlockingDecisionTrace(withSections(...CONFIRM_WITHOUT_TRACE)), false);
 });
 
+// `AskUserQuestion` 是 Claude Code 的确认工具名，§8.8 R35 声明层一直把它列为可接受表态，
+// 而实现原先只认 `askquestion`——**后者不是前者的子串**（AskUser+Question），于是纯英文
+// 留痕行被判「没问过用户」。以下两例刻意**全英文**：若把 `askuserquestion` 从判据里去掉，
+// 第一例立刻转红（其余备选 用户/确认/决策/答复/裁决 均为中文，不会替它兜底），
+// 故本用例对该分支有真实判别力，不是空跑。
+test('R35: 纯英文的 AskUserQuestion 决策留痕须被认可（R12 补实现，非放松）', () => {
+  const md = withSections(
+    '## 用户确认记录',
+    '',
+    '| 确认项 | 时间 | 用户原话摘要 |',
+    '| ------ | ---- | ------------ |',
+    '| blocking decision | 2026-08-13 | AskUserQuestion: picked "ship without payments" |',
+    '',
+  );
+  assert.equal(hasBlockingDecisionTrace(md), true);
+});
+
+test('R35: 同形态但没问过用户的英文行仍不算留痕（防判据被拓宽成恒真）', () => {
+  const md = withSections(
+    '## 用户确认记录',
+    '',
+    '| 确认项 | 时间 | 用户原话摘要 |',
+    '| ------ | ---- | ------------ |',
+    '| blocking decision | 2026-08-13 | postponed to the next sprint |',
+    '',
+  );
+  assert.equal(hasBlockingDecisionTrace(md), false);
+});
+
+test('R35: Cursor 时代的 AskQuestion 形态保留可接受（迁移仓库不被反向打破）', () => {
+  const md = withSections(
+    '## 用户确认记录',
+    '',
+    '| 确认项 | 时间 | 用户原话摘要 |',
+    '| ------ | ---- | ------------ |',
+    '| blocking decision | 2026-08-13 | AskQuestion: waiting on sandbox |',
+    '',
+  );
+  assert.equal(hasBlockingDecisionTrace(md), true);
+});
+
 test('R35: 表头行不被误认作决策留痕', () => {
   const md = withSections(
     '## 用户确认记录',
@@ -137,7 +178,7 @@ test('R35: 只写 blocking: true、其余全是出厂模板 → 不放行（本�
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'blocking-missing-reason');
   assert.match(r.message, /R35/);
-  assert.match(r.message, /AskQuestion/, '文案须给出补齐路径，而不只是拒绝');
+  assert.match(r.message, /AskUserQuestion/, '文案须给出补齐路径，而不只是拒绝');
 });
 
 test('R35: 有实质阻塞原因但无用户决策留痕 → 不放行（理由可区分）', () => {

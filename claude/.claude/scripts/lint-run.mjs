@@ -27,7 +27,7 @@ import {
   detectStackFromFileNames,
   buildLintRemediation,
 } from './lint-run-lib.mjs';
-import { attachExecutionProof } from '../hooks/lib/execproof.mjs';
+import { attachExecutionProof, warnIfUnsigned } from '../hooks/lib/execproof.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -177,6 +177,7 @@ function main() {
   // R34：落签须在写盘之前，且签名覆盖上面全部字段（含 gatePassed）。
   attachExecutionProof('lint', result);
   writeResult(result);
+  warnIfUnsigned(result); // F-03：未落签时给出与 stop 门禁一致的排查方向
   // 控制台省略 output，避免刷屏；完整输出已在产物文件中。
   console.log(JSON.stringify({ ...result, output: undefined }, null, 2));
   process.exit(result.gatePassed ? 0 : 1);

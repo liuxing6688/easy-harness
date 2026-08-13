@@ -19,7 +19,7 @@
 
 新增判据：放到对应域文件并确保 `workflow-gate-lib.mjs` 已 `export *` 该域（通常已覆盖）。
 
-回归：`node .cursor/scripts/gate-selftest.mjs` 与 `node .cursor/scripts/gate-scenarios.mjs`。
+回归：`node .claude/scripts/gate-selftest.mjs` 与 `node .claude/scripts/gate-scenarios.mjs`。
 
 Hook 入口脚本（`../gate-*.mjs`）只编排判定顺序并输出 Cursor Hook JSON；业务判据一律落在本目录。
 包括 **R36** 的判定期异常裁决——入口脚本只负责调用 `buildGateExceptionVerdict` 并输出结果，

@@ -134,7 +134,7 @@ export function recordIdentityBaselineNotice(reason) {
       '## 门禁软性提醒（非阻塞）',
       '',
       IDENTITY_BASELINE_NOTICE_MARKER,
-      `- [R5 身份判据降级] 本次受门禁写入在裁决时，顶层代写拦截处于 fail-open 降级态：${why}。此期间「顶层代理亲自写受门禁路径」**无法被机械拦截**，仅由 AGENTS.md §5.1 文字约束与回合自检兜底。若这不是预期状态，请检查 subagentStart Hook 是否生效、\`.claude/hooks/.root-conversation-id.json\` 是否被误写或被外部工具占用。`,
+      `- [R5 身份判据降级] 本次受门禁写入在裁决时，顶层代写拦截处于 fail-open 降级态：${why}。此期间「顶层代理亲自写受门禁路径」**无法被机械拦截**，仅由 CLAUDE.md §5.1 文字约束与回合自检兜底。若这不是预期状态，请检查 subagentStart Hook 是否生效、\`.claude/hooks/.root-conversation-id.json\` 是否被误写或被外部工具占用。`,
       '',
     ].join('\n');
 

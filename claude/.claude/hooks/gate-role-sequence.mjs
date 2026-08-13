@@ -118,7 +118,7 @@ async function main() {
     emit(
       'deny',
       `流程门禁（R13）：发起 ${role} 前置条件未满足——${message}`,
-      `AGENTS.md R13/gate-chain.md：${message}（reason=${reason}）。请先完成对应前置成果物或分派，再重试发起该角色。`,
+      `CLAUDE.md R13/gate-chain.md：${message}（reason=${reason}）。请先完成对应前置成果物或分派，再重试发起该角色。`,
     );
   }
 

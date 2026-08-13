@@ -20,9 +20,15 @@ import {
   isProcessBlocked,
   hasUnresolvedIssues,
   readTextFileSafe,
-  recordGateExceptionLedgerEntry
+  recordGateExceptionLedgerEntry,
+  getIterationRound,
+  mentionsIterationRound
 } from './core.mjs';
-import { checkRequirementReady } from './iteration.mjs';
+import {
+  checkRequirementReady,
+  getIncrementScopeYesRows,
+  isMigrationDimension,
+} from './iteration.mjs';
 
 export const REQUIRED_DPL_HEADERS = [
   '检查维度',
@@ -95,9 +101,22 @@ function isBlankOrPlaceholder(raw) {
   return false;
 }
 
-/** 从任务包单元格提取 T 编号（如 T0-1、T-DOC-1） */
+/**
+ * 任务包编号的唯一机读形态：**大写多段编号**——首段以大写字母开头（可含数字），
+ * 至少一个 `-` / `/` / `.` 分隔段。如 `T0-1`、`T-DOC-1`、`A-DOC-1`、`B-LIB-1/2/3`。
+ *
+ * F-12（2026-08-11 审核修复）：历史实现为 `/\bT[\w./-]+\b/`，**必须以字母 T 开头**，
+ * 而 `mechanical-gates.md` §B1（进度统计）与 R17（对账「关联任务包」）明文举例
+ * `A-DOC-1`、`B-LIB-1/2/3`——B1 自己举的两个例子在 R18 眼里全部 `p0-task-id-unparseable`，
+ * 且理由行只提示「如 T0-1」，不说明真实规则是首字母必须为 T。任何遵循 B1/R17 举例
+ * 命名任务包的项目都会在 R18 处卡死。故按规约声明对齐实现（R12：文档强于实现须补实现，
+ * 不得反向削减文档），T 前缀不再是硬约束，但仍要求「大写 + 多段」以免把散字当编号。
+ */
+const TASK_PACK_ID_RE = /\b[A-Z][A-Z0-9]*(?:[-/.][A-Z0-9]+)+\b/g;
+
+/** 从任务包单元格提取任务包编号（大写多段编号，如 T0-1 / A-DOC-1 / B-LIB-1/2/3） */
 function extractTaskPackIds(raw) {
-  const matches = String(raw ?? '').match(/\bT[\w./-]+\b/g);
+  const matches = String(raw ?? '').match(TASK_PACK_ID_RE);
   return matches ? [...new Set(matches)] : [];
 }
 
@@ -121,7 +140,9 @@ function designAnchorResolvable(anchor, designContent) {
 /** 任务包编号是否出现在开发任务清单（清单本身无任何 T 编号时视为 stub，跳过） */
 function taskPackExistsInList(taskId, taskListContent) {
   if (!taskListContent) return true;
-  if (!/\bT[\w./-]+\b/.test(taskListContent)) return true;
+  // 任务清单里一个可识别编号都没有时视为 stub，跳过交叉校验（与 designAnchorResolvable 同策略）。
+  // F-12：判据须与 extractTaskPackIds 同源，否则 `A-DOC-1` 这类合规编号会被当成 stub 而静默放行。
+  if (!new RegExp(TASK_PACK_ID_RE.source).test(taskListContent)) return true;
   return taskListContent.includes(taskId);
 }
 
@@ -291,6 +312,22 @@ export function checkDesignReviewConclusion(dplContent) {
       ok: false,
       reason: 'review-not-passed',
       message: `R18：「## 审核结论」最新结论须为「通过」或「复审通过」（当前：${verdict || '空'}）。`,
+    };
+  }
+
+  // **F-09（成果物时效性）**：hotfix / single-task 沿用同一份 docs 子树，`design-problem-list.md`
+  // 是单文件累积结构。历史实现只看「最后一行结论是否为通过」，于是**第一轮**的通过行
+  // 直接为**第二轮**的新设计背书——增量改了设计却不必再过审核。故 `iterationRound ≥ 2`
+  // 时要求最新结论行自带本轮轮次标识；单轮项目（默认 1）判据与历史逐字一致。
+  const round = getIterationRound(readProcessMd() ?? '');
+  if (round >= 2 && !mentionsIterationRound(last.join(' '), round)) {
+    return {
+      ok: false,
+      reason: 'review-conclusion-stale-round',
+      message:
+        `R18/F-09：当前为第 ${round} 轮迭代（process.md \`iterationRound: ${round}\`），但「## 审核结论」` +
+        `最新行未标注本轮轮次，属上一轮的结论——不得为本轮设计背书。请由 requirement-reviewer ` +
+        `就本轮设计重新审核并追加一行（「审核轮次」列写明第 ${round} 轮）。`,
     };
   }
   return { ok: true, reason: needsRereview ? 'rereview-passed' : 'checked' };
@@ -566,13 +603,34 @@ export function recordFailOpenEvent(hookName, context, err) {
       '',
     ].join('\n');
 
-    if (/## 门禁异常事件/.test(content)) {
+    // **章节判定必须锚在行首标题上（F-25 二次加固）**：`fillBlockingReason` 自己会往
+    // 「## 阻塞原因」正文写「- 待决事项：核查 stderr 与「## 门禁异常事件」……」这句提示语，
+    // 而历史实现用的是**裸子串** `/## 门禁异常事件/`。于是第二次 fail-open 时，兜底分支
+    // 命中的是那句提示语，数据行被插进「## 阻塞原因」的条目列表中间——行离开了审计章节，
+    // `parsePendingGateExceptionRows` 读不到它，F-22 反向对账随即判
+    // `gate-exception-ledger-orphan`，要求 PM「据台账原样恢复」一条门禁自己放错位置的行。
+    // 即：同一流程发生两次 fail-open 就死锁，且死锁面正是审计面。
+    if (/^#{1,6}[^\S\r\n]*门禁异常事件/m.test(content)) {
+      // 插在分隔行**紧后**，不得跨过其后的空行——否则 parseMarkdownTables 会按空行断表，
+      // 把这条数据行当成「另一段表」，`## 门禁异常事件` 表 0 的 rows 为 0，
+      // 于是 R35「机器起源」释放分支对**门禁自己写的**事件也判 no-pending-event（100% 不可达）。
+      // 末尾刻意用 `\r?\n` 而非 `\s*\n`：`\s` 含换行，会贪婪吃掉分隔行后的空行。
+      //
+      // 标题与表头之间**允许夹说明文字**（F-25 二次加固）：出厂 `.claude/templates/process.md`
+      // 的该章节形如「标题 / 空行 / `>` 说明引用 / 空行 / 表头 / 分隔行」。历史正则中段只允许
+      // 夹空行（`(?:[^\S\r\n]*\r?\n)*`），对**出厂模板必然失配**，于是每次都落到下面的兜底
+      // 分支，把数据行插到标题紧后——排在它自己的表头**之前**，形态错乱，仅靠读取侧鲁棒化
+      // 兜住。换成 `(?:(?!#{1,6}[^\S\r\n])[^\n]*\r?\n)*?`：惰性跨过任意非标题行，
+      // 绝不越进下一个章节。
       content = content.replace(
-        /(## 门禁异常事件\s*\n\s*\| 时间 \| Hook \| 上下文 \| 异常摘要 \| 处理状态 \|\s*\n\|[^\n]+\|\s*\n)/,
+        /(^#{1,6}[^\S\r\n]*门禁异常事件[^\n]*\r?\n(?:(?!#{1,6}[^\S\r\n])[^\n]*\r?\n)*?[^\S\r\n]*\| 时间 \| Hook \| 上下文 \| 异常摘要 \| 处理状态 \|[^\n]*\r?\n[^\S\r\n]*\|[^\n]+\|\r?\n)/m,
         `$1${row}\n`,
       );
       if (!content.includes(row)) {
-        content = content.replace(/(## 门禁异常事件\s*\n)/, `$1\n${row}\n`);
+        // 兜底：章节在但表头缺失/被改名。插在标题紧后，形态为「空行 + 数据行」，
+        // 读取侧对此已鲁棒化（`core.mjs#parsePendingGateExceptionRows` 收集本节内未被
+        // `parseMarkdownTables` 归入任何表的 `|` 行）。同样须行首锚定，理由见上。
+        content = content.replace(/(^#{1,6}[^\S\r\n]*门禁异常事件[^\n]*\r?\n)/m, `$1\n${row}\n`);
       }
     } else {
       content = `${content.trimEnd()}\n\n${header}`;
@@ -699,6 +757,95 @@ export function checkDesignProblemListStructure(content) {
     }
   }
 
+  return { ok: true, reason: 'checked' };
+}
+
+/**
+ * `requirement-list.md` 中被标注属于第 `round` 轮的需求编号集合。
+ *
+ * 认两种标注方式（任一即可，不强制改动出厂模板的列结构）：
+ *   1. 存在 `轮次` / `迭代` 列，且该格带本轮轮次标识（`第2轮` / `轮次 2` / `round 2`）；
+ *   2. 无该列时，行内任一格带本轮轮次标识（常见写法：在「来源确认」里写「第2轮用户原话……」）。
+ * @returns {Set<string>}
+ */
+export function extractRoundRequirementIds(reqListContent, round) {
+  const ids = new Set();
+  for (const table of parseMarkdownTables(reqListContent ?? '')) {
+    const idIdx = table.headers.findIndex((h) => /需求编号/.test(h));
+    if (idIdx === -1) continue;
+    const roundIdx = table.headers.findIndex((h) => /轮次|迭代/.test(h));
+    for (const row of table.rows) {
+      const id = normalizeRequirementId(row[idIdx]);
+      if (!id) continue;
+      const scope = roundIdx >= 0 ? (row[roundIdx] ?? '') : row.join(' ');
+      if (mentionsIterationRound(scope, round)) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * **F-09（增量档交叉校验）**：`single-task` 下「## 增量范围」每个填「是」的维度，
+ * 都须在 `requirement-list.md` 里对应到**本轮新立的需求编号**。
+ *
+ * 为什么需要这条：增量档的全部前置判据原本都是「活跃 docs 子树里文件是否存在」，而
+ * hotfix / single-task 沿用同一份子树——第二轮起上一轮的 `requirement-spec.md` /
+ * `requirement-list.md` 永久充当合规证据，实测可在**零本轮需求、零本轮设计**的状态下
+ * 直接放行 DE。`workflow-modes.md` R2 明文要求增量档「角色一个不省」，但那是纯文字；
+ * 本判据把它落成机械判据：声明改了什么（增量范围）↔ 立了什么编号（需求清单）必须对得上，
+ * 与 R18「P0 ↔ 覆盖矩阵」同构。
+ *
+ * 判据细节：
+ * - 只在 `iterationRound ≥ 2` 时生效——与 R20/F-17、R18/F-09 现有轮次判据同一约定，
+ *   轮次推进由 PM 负责；单轮项目行为与历史逐字一致（只加强不放松）。
+ * - **迁移维豁免**：该维为「是」时增量档本就整体失效（`increment-scope-breaking-change`），
+ *   不必再要求它立编号。
+ * - 「影响的既有行为」这类**回归面**维度同样要求编号：本轮既然声明会改既有行为，
+ *   就该有一条本轮需求承载它，否则回归范围无从追溯。
+ */
+export function checkIncrementScopeRequirementCrossCheck(processContent) {
+  const content = processContent ?? readProcessMd() ?? '';
+  if (getWorkflowMode(content) !== 'single-task') return { ok: true, reason: 'not-single-task' };
+  const round = getIterationRound(content);
+  if (round < 2) return { ok: true, reason: 'first-round' };
+
+  const yesRows = getIncrementScopeYesRows(content).filter(
+    (r) => !isMigrationDimension(r.dimension),
+  );
+  if (yesRows.length === 0) return { ok: true, reason: 'no-affected-dimension' };
+
+  const reqListPath = path.join(getActiveDocsBase(), 'requirement/requirement-list.md');
+  const reqList = readTextFileSafe(reqListPath) ?? ''; // R30
+  const roundIds = extractRoundRequirementIds(reqList, round);
+  if (roundIds.size === 0) {
+    return {
+      ok: false,
+      reason: 'increment-no-round-requirement-ids',
+      message:
+        `R37/F-09：当前为第 ${round} 轮增量（\`workflow_mode: single-task\`），但 requirement-list.md 中` +
+        `没有任何一行被标注属于第 ${round} 轮——上一轮的需求清单不为本轮背书。请由 requirements-analyst ` +
+        `就本轮增量新立需求编号，并在「轮次/迭代」列（或「来源确认」列）标明「第${round}轮」；` +
+        '增量档「角色一个不省」，RA 这一环不得跳过。',
+    };
+  }
+
+  for (const row of yesRows) {
+    const refs = (row.note.match(/R-\d+/gi) ?? []).map((s) => normalizeRequirementId(s)).filter(Boolean);
+    const linked = refs.filter((id) => roundIds.has(id));
+    if (linked.length === 0) {
+      return {
+        ok: false,
+        reason: 'increment-scope-requirement-unlinked',
+        message:
+          `R37/F-09：「## 增量范围」的「${row.dimension}」维声明为「是」，但其「说明」列没有引用任何` +
+          `第 ${round} 轮的需求编号（本轮已立编号：${[...roundIds].join('、') || '无'}${
+            refs.length ? `；该行引用的是 ${refs.join('、')}` : ''
+          }）。声明「改了什么」必须能对应到「立了哪条本轮需求」，否则增量范围无从审核、回归面无从追溯。` +
+          '请在该维说明列补上本轮 R-编号（与 R18「P0 ↔ 覆盖矩阵」同构的交叉校验）；' +
+          '若该维实际不涉及，请如实改为「否」。',
+      };
+    }
+  }
   return { ok: true, reason: 'checked' };
 }
 
@@ -860,7 +1007,9 @@ export function checkRequirementCoverageMatrix(dplContent, reqListContent) {
       return {
         ok: false,
         reason: 'p0-task-id-unparseable',
-        message: `R18：P0 需求 ${id} 的「任务包」须含可识别编号（如 T0-1）。`,
+        message:
+          `R18：P0 需求 ${id} 的「任务包」须含可识别编号——**大写多段编号**，` +
+          '首段以大写字母开头且至少含一个 `-`/`/`/`.` 分隔段（如 `T0-1`、`A-DOC-1`、`B-LIB-1/2/3`）。',
       };
     }
     for (const tid of taskIds) {

@@ -10,5 +10,5 @@ alwaysApply: false
 - R14/R17/E2E 与 `gatePassed`：执行面见 `test-engineer.md`；说明权威见 `.claude/harness/spec/mechanical-gates.md` §8.3。
 - `gatePassed≠true` 不得推进下一批次或宣告完成；豁免须双要素，仅一项不生效。
 - **R34 执行证明**：`test-results/**` 机读产物须带门禁签发的 `execProof`。**禁止手工编辑这些产物**（含「只改一个 `gatePassed`」「补个缺失字段」「复用上一批次产物」）——签名覆盖除 `execProof` 外全部字段，改动会被识破为 `exec-proof-signature-mismatch`，与伪造测试结论同级。须**在代理 Shell 通道内**重跑对应 `*-run.mjs` 以取得新证明。例外：`test-results/recon/*.json`（R17 对账证据）仍由 TE 手写，但须是实际查验后的记录。
-- **R38 工具不可用 ≠ 检查未通过**：产物含 `toolUnavailable: true` 时，失败源于工具/依赖/网络/代理/证书，**不是**代码质量问题。不得编造违规项或缺陷来「解释」它；须回报 PM 走「标 blocking + AskQuestion 请用户决策」路径。说明权威见 §8.8。
+- **R38 工具不可用 ≠ 检查未通过**：产物含 `toolUnavailable: true` 时，失败源于工具/依赖/网络/代理/证书，**不是**代码质量问题。不得编造违规项或缺陷来「解释」它；须回报 PM 走「标 blocking + AskUserQuestion 请用户决策」路径。说明权威见 §8.8。
 - 执行权威始终是 Hook / `*-run.mjs`，文档不得单独放宽（R12）。

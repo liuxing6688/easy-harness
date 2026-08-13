@@ -35,7 +35,18 @@ test('R18: 未解决行缺修复建议时结构失败', () => {
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'unresolved-missing-fix');
 });
+// 摘录真实性/落点可解析性判据会读**当前活跃** process.md 旁的设计文档；不建夹具时会退回
+// 宿主仓库自己的 docs/design/**（本 harness 仓库就有一份真实设计），使「stub ⇒ 跳过真实性」
+// 类用例随宿主内容漂移。故显式建 stub 夹具，让判据只由夹具决定（2026-08-11 修复）。
+function fixtureStubDesign() {
+  fixtureProcess('---\nworkflow_mode: full\n---\n', {
+    'docs/design/detail-design-spec.md': '# design',
+    'docs/design/develop-task-list.md': '# tasks',
+  });
+}
+
 test('R18: P0 覆盖矩阵通过', () => {
+  fixtureStubDesign();
   assert.equal(
     checkRequirementCoverageMatrix(SELFTEST_DPL_CLEAN, SELFTEST_REQ_LIST).ok,
     true,
@@ -190,7 +201,7 @@ test('R18 加固: 跨多个 P0 行摘录完全相同（复制糊弄）时覆盖�
   assert.equal(r.reason, 'excerpt-duplicated-across-rows');
 });
 test('R18 加固: 设计文档为 stub（无正文）时摘录真实性/去重校验跳过真实性一项（已知局限，向后兼容）', () => {
-  cleanup();
+  fixtureStubDesign();
   const r = checkRequirementCoverageMatrix(SELFTEST_DPL_CLEAN, SELFTEST_REQ_LIST);
   assert.equal(r.ok, true);
 });
@@ -284,4 +295,61 @@ test('R9: hotfix_p0_impact=p0 且无 R18 通过时失败', () => {
   const r = checkHotfixP0Impact(content);
   assert.equal(r.ok, false);
   assert.equal(r.reason, 'hotfix-p0-needs-rr');
+});
+
+// ── F-12：任务包编号形态须与 mechanical-gates.md §B1 / R17 的举例一致 ──────────────
+// 历史实现 `/\bT[\w./-]+\b/` 要求首字母为 T，于是 B1 亲自举例的 `A-DOC-1`、`B-LIB-1/2/3`
+// 全部 `p0-task-id-unparseable`，且理由行只提示「如 T0-1」，不说明真实规则。
+// 下面把「大写多段编号」这一唯一形态钉死，并保留对散字/小写的拒绝。
+const F12_DESIGN = '# 详细设计\n\n## 2. 核心模块\n\n系统支持用户可创建待办项以便追踪进度。\n';
+
+function f12Matrix(taskCell) {
+  return SELFTEST_DPL_CLEAN.replace(
+    '| R-001 | P0 | AC-R-001-1 可验证 | detail-design-spec.md §2 | 用户可创建待办项 | T0-1 | 已覆盖 |',
+    `| R-001 | P0 | AC-R-001-1 可验证 | detail-design-spec.md §2 | 用户可创建待办项 | ${taskCell} | 已覆盖 |`,
+  );
+}
+
+for (const tid of ['T0-1', 'T-DOC-1', 'A-DOC-1', 'B-LIB-1/2/3', 'INC.A-2']) {
+  test(`R18/F-12: 大写多段任务包编号 ${tid} 可解析且交叉校验通过`, () => {
+    fixtureProcess('---\nworkflow_mode: full\n---\n', {
+      'docs/design/detail-design-spec.md': F12_DESIGN,
+      'docs/design/develop-task-list.md': `# tasks\n${tid} 实现待办创建`,
+    });
+    const r = checkRequirementCoverageMatrix(f12Matrix(tid), SELFTEST_REQ_LIST);
+    assert.equal(r.ok, true);
+  });
+}
+
+test('R18/F-12: 非 T 前缀编号在任务清单中缺失时仍报 p0-task-not-found（不因放宽而漏判）', () => {
+  fixtureProcess('---\nworkflow_mode: full\n---\n', {
+    'docs/design/detail-design-spec.md': F12_DESIGN,
+    'docs/design/develop-task-list.md': '# tasks\nA-DOC-1 已有任务',
+  });
+  const r = checkRequirementCoverageMatrix(f12Matrix('B-LIB-9'), SELFTEST_REQ_LIST);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'p0-task-not-found');
+});
+
+for (const bad of ['待补', 'todo-1', 'A', 'ABC']) {
+  test(`R18/F-12: 非编号形态「${bad}」仍判 p0-task-id-unparseable`, () => {
+    fixtureProcess('---\nworkflow_mode: full\n---\n', {
+      'docs/design/detail-design-spec.md': F12_DESIGN,
+      'docs/design/develop-task-list.md': '# tasks\nT0-1',
+    });
+    const r = checkRequirementCoverageMatrix(f12Matrix(bad), SELFTEST_REQ_LIST);
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'p0-task-id-unparseable');
+  });
+}
+
+test('R18/F-12: 任务清单含合规非 T 编号时不再被误判为 stub 而跳过交叉校验', () => {
+  fixtureProcess('---\nworkflow_mode: full\n---\n', {
+    'docs/design/detail-design-spec.md': F12_DESIGN,
+    'docs/design/develop-task-list.md': '# tasks\nA-DOC-1 已有任务',
+  });
+  // 历史行为：任务清单里没有 T 开头编号 ⇒ 视为 stub ⇒ includes 检查被整体跳过 ⇒ 静默放行。
+  const r = checkRequirementCoverageMatrix(f12Matrix('A-DOC-7'), SELFTEST_REQ_LIST);
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'p0-task-not-found');
 });

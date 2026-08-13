@@ -20,8 +20,8 @@
 | ---- | -------- | -------- |
 | `full` | 默认；或轻量声明未通过 R20 确认时的 fail-safe | 需求 → 架构 → 设计审核 → 开发 → QE → 测试 |
 | `hotfix` | **R20** 用户确认后写入 `workflow_mode: hotfix` | 跳过完整需求分析师与系统架构师阶段，但 PM 必须完成 R9 最小影响澄清（受影响用户、既有行为、回滚条件、P0 判断）且**须已有 `detail-design-spec.md`**；无则按 R9 前置校验先补最小热修设计，见 `gate-chain.md`；测试环节按 **R11** 折叠为单次集成测试+E2E（不区分批次/最终，见 `mechanical-gates.md` §8.2/§8.3） |
-| `docs-only` | **R20** 用户确认后写入 `workflow_mode: docs-only` | 仅允许修改 `docs/**/*.md`；Hook 拒绝一切源码写入 |
-| `single-task` | **R20** 用户确认后写入 `workflow_mode: single-task` | **增量迭代档**（2026-07-30 重构，见 **R37**）：在已有基线设计的项目上做一次功能增量。前置须有 `detail-design-spec.md` 且在 `process.md`「## 增量范围」声明四维影响面（涉及 schema 变更时禁用本档）。测试按 **R37** 折叠为**单轮**集成测试 + E2E，但 R14 接口测试 / R17 存储对账 / R32 启动冒烟 / R15 / R16 / R18 **一条不减**；唯一的角色侧简化是豁免 R26 技术选型确认（基线项目已确认过） |
+| `docs-only` | **R20** 用户确认后写入 `workflow_mode: docs-only` | **禁止**写入源码与构建产物（Hook 拒绝一切受门禁开发路径，含 `e2e/**`）；文档与仓库元文件（`docs/**`、根级 `README.md`、`.gitignore` 等非源码文本）可改。无 DE / QE / 测试 |
+| `single-task` | **R20** 用户确认后写入 `workflow_mode: single-task` | **增量迭代档**（2026-07-30 重构，见 **R37**）：在已有基线设计的项目上做一次功能增量。前置须有 `detail-design-spec.md` 且在 `process.md`「## 增量范围」声明**五维**影响面（**需要迁移脚本 / 破坏向后兼容**时禁用本档；数据形状虽变但兼容未破时可用，代价是须声明并落地兼容性回归用例，见 **F-08**）。测试按 **R37** 折叠为**单轮**集成测试 + E2E，但 R14 接口测试 / R17 存储对账 / R32 启动冒烟 / R15 / R16 / R18 **一条不减**；唯一的角色侧简化是豁免 R26 技术选型确认（基线项目已确认过） |
 
 > **真实浏览器 E2E 门禁**：批次 + 最终 E2E 为机械门禁（`e2e-run.mjs` 双模式判据），适用范围、`gatePassed` 公式与命令的唯一权威定义见 `mechanical-gates.md` §8.3。
 
@@ -48,8 +48,8 @@
 | ---------------- | -------------------- | -------------------------------------- |
 | **完整流程** | `full` | 需求 → 架构 → 设计审核 → 开发 → QE → 测试（默认；改动面不清或新增功能时选此项） |
 | **修缺陷** | `hotfix` | 跳过完整需求/架构；须已有设计（或先补最小热修设计）+ 影响面澄清 → 开发 → QE → **单次**集成测试+E2E（不区分批次/最终） |
-| **只改文档** | `docs-only` | 仅改 `docs/**/*.md`；**禁止**写源码与跑开发门禁；无 DE / QE / 测试 |
-| **加个功能（增量迭代）** | `single-task` | 在**已有设计**的项目上加一个功能增量。角色一个不省（RA→SA→RR→DE→QE→TE），但**测试只做一轮**（不再分批次+最终），且**豁免技术选型确认**（沿用基线技术栈）。接口测试 / 存储对账 / 启动冒烟 / lint / 静态扫描 / 设计审核判据**全部保留**。须先声明「增量范围」四维；**涉及数据模型 / schema 变更时本项不可用**，须选「完整流程」 |
+| **只改文档** | `docs-only` | **禁止**写源码与构建产物、禁止跑开发门禁；文档与仓库元文件可改；无 DE / QE / 测试 |
+| **加个功能（增量迭代）** | `single-task` | 在**已有设计**的项目上加一个功能增量。角色一个不省（RA→SA→RR→DE→QE→TE），但**测试只做一轮**（不再分批次+最终），且**豁免技术选型确认**（沿用基线技术栈）。接口测试 / 存储对账 / 启动冒烟 / lint / 静态扫描 / 设计审核判据**全部保留**。须先声明「增量范围」五维；**需要迁移脚本或破坏向后兼容时本项不可用**，须选「完整流程」。若只是新增可选字段一类**向后兼容且无迁移**的形状变更，本项仍可用，但须声明并落地一条兼容性回归用例（**F-08**） |
 
 > 升级确认（范围扩大改回 `full`）时，至少提供「完整流程」选项并展示上表对应摘要；可附一句说明为何不能继续轻量。
 
@@ -70,14 +70,44 @@
 | 判定维度 | 命中则提议 |
 | -------- | ---------- |
 | 新增功能 / 新交互面（新页面、新接口、新命令面） | `full` + `feature`（或首次 `greenfield`） |
-| 修改数据模型 / schema / 新增迁移 | `full`（禁止 `single-task`） |
+| 需要迁移脚本 / 破坏向后兼容的数据模型变更 | `full`（禁止 `single-task`） |
+| 数据形状变更但**向后兼容且无迁移**（如新增可选字段） | 可 `single-task`（**F-08**：须声明并落地兼容性回归用例；说不清兼容性时按上一行走 `full`） |
 | 仅改治理层（AGENTS/hook/config/agent 定义） | `full` + `governance-overhaul` |
 | 修复缺陷、无需求/架构变更 | `hotfix`（沿用当前 process.md；须 R20） |
-| 仅改 `docs/**/*.md` 文档 | `docs-only`（须 R20） |
-| 在已有设计的项目上做一次功能增量（不改 schema） | 可 `single-task`（须 R20 + R37 增量范围声明；测试折叠为单轮，验证判据不减） |
+| 只改文档与仓库元文件（不动源码） | `docs-only`（须 R20） |
+| 在已有设计的项目上做一次功能增量（不需迁移、不破坏兼容） | 可 `single-task`（须 R20 + R37 增量范围五维声明；测试折叠为单轮，验证判据不减） |
 
 > `iterationType` 取值仅限：`greenfield` / `feature` / `governance-overhaul` / `hotfix` / `docs-only`；
 > 与 `workflow_mode` 协同（如 `governance-overhaul` 通常配 `full`）。缺省判定为 `full` + 对应 `iterationType`。说不清或触达上表强制 `full` 维度时，不得提议轻量模式。
+
+#### `iterationRound`（轮次时效性，**F-09 / F-17** 机读，2026-08-11 v2 评审新增）
+
+`hotfix` 与 `single-task` 都「沿用当前活跃 `process.md`」，而 `## 用户确认记录`、`## 进度列表`、
+`design-problem-list.md` 的 `## 审核结论` 都是**单表累积**结构。历史实现只判「表里存在一行合规行」，
+于是**第 2 轮起，上一轮的留痕直接为本轮背书**——同一套门禁越往后越松：用户从未为本轮的模式选择
+表过态，审核也从未看过本轮的增量设计。
+
+判据（`core.mjs` `getIterationRound` / `mentionsIterationRound` 为执行权威）：
+
+| 项 | 规则 |
+| -- | ---- |
+| frontmatter | `iterationRound: <正整数>`，缺省 / 非法值一律兜底为 `1` |
+| PM 义务 | 同一份 `process.md` 复用于新一轮迭代时，**须**递增本字段（这是「本轮开始」的机读信号） |
+| **R20 确认行**（`iterationRound ≥ 2`） | 「工作流模式确认」行须自带本轮轮次标识（`第2轮` / `轮次 2` / `round 2`），否则按未确认处理，fail-safe 回 `full` |
+| **R18 审核结论**（`iterationRound ≥ 2`） | `## 审核结论` 最新行须标注本轮轮次，否则拒绝进入开发（`review-conclusion-stale-round`） |
+| **R37 增量范围 ↔ 需求编号交叉校验**（`single-task` 且 `iterationRound ≥ 2`） | `## 增量范围` 每个「是否涉及」=`是` 的维度（迁移维除外）须在「说明」列引用至少一个**本轮**新立的 `R-` 编号；`requirement-list.md` 本轮零编号即拒派（`increment-no-round-requirement-ids`），有编号但某维度未引用则拒派（`increment-scope-requirement-unlinked`）。执行权威 `design.mjs#checkIncrementScopeRequirementCrossCheck`，在 **SA 与 DE 两个派发分支**同时生效（只挂 SA 则「跳过 SA 直接派 DE」即可绕过） |
+
+**交叉校验的判据形状（与 R18 需求覆盖矩阵同构）**：本轮编号的认定见 `design.mjs#extractRoundRequirementIds`——
+`requirement-list.md` 有 `轮次` / `迭代` 列时取该列，无该列（含出厂模板）时按**行内任一格**带本轮轮次
+标识判定（常见写法：「来源确认」列写「第2轮用户确认」）。迁移维（`需要迁移脚本 / 破坏向后兼容`）
+不参与本判据：该维为「是」时增量档本就整体失效（`increment-scope-breaking-change`），
+再要求它承载需求编号只会给出方向错误的指引。全维皆「否」时不要求本轮编号——没声明改动即无须承载。
+
+该判据要拦的是增量档最典型的失效形态：**声明了「本轮新增对外接口」，需求清单里却没有任何本轮
+新立的需求**——即改动绕过了需求澄清与用户确认，直接从「PM 觉得要做」跳到设计与开发。
+
+轮次标识只认「轮次语义 + 数字」的组合，需求编号 `R-002`、年份 `2026`、`第22轮` 都不会被误判为第 2 轮。
+`iterationRound: 1`（即绝大多数单轮项目）的判据与历史逐字一致——本条只在多轮场景**加强**，不放松任何既有约束（R12）。
 
 #### `single-task` = 增量迭代档（**R37**，唯一权威定义，2026-07-30 重构）
 
@@ -108,26 +138,38 @@ R37 把它重构成名副其实的**增量迭代档**。设计原则只有一条
 | **R25 同构模块识别** | 保留。增量最容易克隆既有代码，本判据在增量场景比在 greenfield 更有价值 |
 | **R19 隐性需求记录 / R27 需求摘要确认 / R33 界面期望确认** | 保留（R33 不因「沿用既有界面」自动豁免，须留痕「本次增量无独立界面期望」） |
 | **R34 执行证明 / R38 工具不可用分类** | 保留（与模式无关） |
+| **兼容性回归用例**（**F-08** 新增） | 走「数据形状变更：是 + 需要迁移/破坏兼容：否」路径时**新增**本判据：声明侧须写进增量范围说明列，执行侧须在本轮唯一测试落地用例行。这是 schema 硬禁用被分档放松所换取的对价，缺失即回退为禁用增量档 |
 
 ##### 新增前置（**R37** 机读，缺一不得进入开发）
 
 1. **基线设计存在**：活跃 docs 子树下须有 `detail-design-spec.md`。没有说明这其实是首次开发，
    应走 `full`（判定函数 `checkSingleTaskBaseDesign`）。此条与 `hotfix` 的 R9 设计前置同构——
    目的是防止用增量档绕过基线设计与 R26 选型确认。
-2. **`## 增量范围` 四维声明**：`process.md` 须含该章节，四维齐全、「是否涉及」为「是/否」、
+2. **`## 增量范围` 五维声明**：`process.md` 须含该章节，五维齐全、「是否涉及」为「是/否」、
    「说明」有实质内容（去标点后 ≥ 4 字）：
 
    | 影响面 | 机读关键词 | 作用 |
    | ------ | ---------- | ---- |
    | 新增/变更对外接口 | 接口 / `api` | 决定 R14 是否必须落地新用例 |
-   | 数据模型 / schema 变更 | 数据模型 / `schema` / 迁移 | **填「是」即禁用增量档**（见下） |
+   | 数据形状变更（新增/修改字段、表、集合） | 数据形状 / 数据模型 / `schema` | 填「是」**不**单独禁用增量档；与下一维组合判定（**F-08**） |
+   | 需要迁移脚本 / 破坏向后兼容 | 迁移 / `migration` / 向后兼容 / 破坏性 | **填「是」即禁用增量档**（见下） |
    | 新增交互面（页面/命令/入口） | 交互面 / 新增页面 / 新增入口 / 新增命令 | 决定 E2E 覆盖面 |
    | 影响的既有行为 | 既有行为 / 回归范围 | 决定回归范围 |
 
-3. **schema 变更硬禁用**：第二维填「是」时 `checkIncrementScopeDeclared` 直接拒绝，须经 AskUserQuestion
-   改回 `full`。这条是把本文件「迭代分诊判定表」里**早就写着、但实现里从未校验过**的
-   「修改数据模型 / schema ⇒ 禁止 `single-task`」补成机械判据（R12：文档强于实现须补实现）。
-   理由：schema 改动的兼容面与回滚面超出单轮折叠测试的覆盖能力。
+3. **破坏性变更硬禁用（原 schema 一刀切，**F-08** 2026-08-11 分档）**：第三维填「是」时
+   `checkIncrementScopeDeclared` 直接拒绝（`increment-scope-breaking-change`），须经 AskUserQuestion
+   改回 `full`。这条承接本文件「迭代分诊判定表」里**早就写着、但实现里从未校验过**的
+   「修改数据模型 / schema ⇒ 禁止 `single-task`」（R12：文档强于实现须补实现），但判据由
+   「碰没碰数据」改为「**破没破坏兼容**」——理由：迁移与不兼容变更的兼容面与回滚面超出单轮
+   折叠测试的覆盖能力，而「新增一个可选字段」并不。分档属放松方向，已按 R12 经用户确认并在
+   `mechanical-gates.md` §8.5 留痕。
+
+4. **「形状变、兼容未破」路径的对价（**F-08** 新增判据）**：第二维「是」+ 第三维「否」时增量档
+   **可用**，但须①在这两维的「说明」列写明**兼容性回归用例**（缺则
+   `increment-scope-missing-compat-regression` 拒绝派发）；②在折叠通道的唯一测试轮次里落地该
+   用例的执行记录（`checkIncrementCompatRegressionReport`，进入 `finalTestComplete`，缺则 stop
+   门禁不放行收尾）。**不得**由被约束方自行论证「我这个 schema 变更很小所以不算」——「是否需要
+   迁移 / 是否破坏兼容」是一次如实声明；声明「否」却实际提交迁移脚本属虚假声明。
 
 > 判定函数：`checkSingleTaskPreconditions` / `checkIncrementScopeDeclared` / `checkSingleTaskBaseDesign`
 > （`iteration.mjs`）；折叠判据见 `parseWorkflowState` 的 `foldedTestChannel`
@@ -145,7 +187,7 @@ R37 把它重构成名副其实的**增量迭代档**。设计原则只有一条
 - 加功能、已有设计、不改 schema ⇒ **`single-task`**（单轮测试，判据全留）。
 - 加功能、但要改 schema / 首次开发 / 改动面说不清 ⇒ **`full`**。
 - 修既有缺陷 ⇒ **`hotfix`**（R11 折叠，且跳过 R14/R17，代价是须已有设计 + R9 影响面澄清）。
-- 只动 `docs/**/*.md` ⇒ **`docs-only`**。
+- 只动文档与仓库元文件（不碰源码、构建产物与 `e2e/**`）⇒ **`docs-only`**。
 
 ### 迭代模式（文档路径）
 
@@ -154,6 +196,28 @@ R37 把它重构成名副其实的**增量迭代档**。设计原则只有一条
 | Greenfield | `docs/process/process.md` | 首次从零开发 |
 | Feature | `docs/{feature-名称}/process/process.md` | 功能迭代；需求/设计文档同目录子树 |
 | Hotfix | 沿用当前活跃 `process.md` | 紧急修复；`workflow_mode: hotfix`（须 R20） |
+| Single-task（增量档） | 沿用当前活跃 `process.md`，或按 Feature 建独立子树 | 增量迭代；`workflow_mode: single-task`（须 R20） |
+| Docs-only | 沿用当前活跃 `process.md` | 只动文档与仓库元文件；`workflow_mode: docs-only`（须 R20） |
+
+> **F-07（2026-08-11 审核修复）**：本表历史上只有前三行，**没有 `single-task` 行**，于是 R37 前置
+> 「活跃 docs 子树下须有 `detail-design-spec.md`」与「Feature 迭代新建独立子树」两条规约互相打死：
+> 新建的 feature 子树刚 bootstrap 出来必然没有设计文档，增量档在它最该适用的场景里 100% 不可用。
+> 现两种路径都合法：**沿用活跃 `process.md`**（与 hotfix 同构，进度表混叠但零额外配置），
+> 或**新建 feature 子树**——后者的基线设计可来自父级 greenfield 子树，
+> `checkSingleTaskBaseDesign()` 在活跃子树缺失时回落判 `docs/design/detail-design-spec.md`。
+> 判据未放松（R12）：两处都没有基线设计仍判 `single-task-base-design-missing` 并要求改走 `full`。
+>
+> **回落范围限定（实现侧，须知）**：父级回落**只对 Feature 布局生效**——活跃流程须形如
+> `…/docs/<feature>/process/process.md`（即活跃 docs 子树的父目录名恰为 `docs`），父级基线取
+> 同一 docs 树的 `…/docs/design/detail-design-spec.md`。非 feature 布局（含 greenfield 根子树、
+> 自定义路径）**不给回落**，否则任意路径的流程文件都能借用仓库根的设计文档。调用方可据
+> `reason` 区分基线来源：`checked`（活跃子树自有）/ `checked-parent-baseline`（来自父级）。
+> 执行权威 `iteration.mjs#checkSingleTaskBaseDesign`。
+>
+> **F-07 加固（本表缺行已机械化）**：F-07 的根因是「代码里有这个模式、本表里没有这一行」。
+> 该漂移现由 `selftest/templates-vs-gates.mjs` 的「模式 ↔ 文档路径表」用例拦截：
+> `core.mjs#LITE_WORKFLOW_MODES` 的每个取值加 `full`，都必须在本表中有对应行，
+> 新增模式而不补行即红。`docs-only` 行就是本轮据此补上的——它此前与 `single-task` 同属缺行。
 
 并行开发多个 feature 时，各 feature 维护独立 `process.md`，顶层代理仅推进用户当前指定的活跃 feature。
 

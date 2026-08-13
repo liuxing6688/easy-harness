@@ -127,6 +127,7 @@ async function main() {
     recordHotfixP0SoftReminder,
     checkRollbackLimit,
     checkBlockingReleaseEvidence,
+    checkGateExceptionLedgerReconciled,
     consumeGateExceptionRelease,
     getGateExceptionPolicy,
   } = lib;
@@ -143,6 +144,14 @@ async function main() {
     // R10：已取消的流程不再被催促推进（无论处于哪个阶段）。
     if (state.cancelled) {
       emitAllow();
+    }
+
+    // R35 / F-22 反向对账（台账 → 表格行）：门禁自己写过的 fail-open 事件不得被静默抹掉。
+    // 置于 blocking 分支**之前**——否则「删掉异常行 + 留着 blocking」正好落进上面的
+    // 无条件放行区间，删行这条路径永远不被追究。cancelled 之后：已取消的流程不再催促。
+    const ledgerRecon = checkGateExceptionLedgerReconciled?.(content);
+    if (ledgerRecon && !ledgerRecon.ok) {
+      emitBlock(`【流程门禁】（R35 门禁异常台账对账）${ledgerRecon.message}`);
     }
 
     // 阻塞态：等待用户决策，stop 不追加催促——但 **R35** 要求先拿出配套证据。
@@ -239,13 +248,25 @@ async function main() {
           '让 Shell 门禁签发 nonce 并由运行器落签；**禁止**手工编辑 test-results 下的机读产物。' +
           '若本机确实无法经门禁通道运行（如用户自行在外部终端执行），须由**用户本人**在 `.claude/harness.config.json` 设 `execProof.enforce: false`（R29 锁定，代理不得修改）。',
       );
+    /**
+     * F-24：产物**过期**（源码已变更、产物是上一版代码的结果）与产物**验签失败**
+     * 是两回事。过期在开发中高频发生且完全正常，处置只是「重跑」；把它并入
+     * 验签失败的文案会让用户/代理去排查一个并不存在的伪造行为。
+     */
+    const staleArtifactBlock = () =>
+      emitBlock(
+        `【流程门禁】（R34 产物新鲜度）以下门禁的机读产物早于最后一次源码变更，属**已过期**：${state.staleArtifactGates.join('、')}。` +
+          '这不是伪造——签名有效，只是代码在产物写出之后又改过，旧结果不能证明当前代码。' +
+          '请由对应角色（QE：lint / 静态扫描；TE：E2E / 启动冒烟）在本回合内**重新运行**相应运行器即可；' +
+          '改动越靠后的产物越需要重跑，顺序上先跑 QE 两项再跑 TE 两项可避免相互作废。',
+      );
     const toolUnavailableBlock = () =>
       emitBlock(
         `【流程门禁】（R38 工具不可用）以下门禁失败的原因是**检查工具本身不可用**（依赖拉取 / 网络 / 代理 / 证书 / 命令缺失），而非代码质量不达标：${state.toolUnavailableGates.join('、')}。` +
           '请**不要**按「整改质量问题」处理——那会让开发工程师去修一个不存在的缺陷。' +
           '本门禁不因工具不可用而放行（R12：网络一断即免检属放松），须由 project-manager 将 `blocking` 置为 true、' +
           '在「## 阻塞原因」写明具体证据（产物中的 `toolUnavailableCategory` / `toolUnavailableDetail`），' +
-          '并用 AskQuestion 请用户在三条路径中决策：①修复工具/网络（含企业代理、证书、离线镜像）；' +
+          '并用 AskUserQuestion 请用户在三条路径中决策：①修复工具/网络（含企业代理、证书、离线镜像）；' +
           '②由**用户本人**在 `.claude/harness.config.json` 配置可离线执行的等价命令覆盖（`qe.commands.*` / `te.startupSmoke.command`）；' +
           '③确认本项目确不适用该检查，走对应门禁的双要素豁免。代理不得自行选择其中任何一条。',
       );
@@ -258,6 +279,8 @@ async function main() {
     if (!isDocsOnly && state.qeComplete) {
       // R34 / R38：先判失败的**性质**，再判各门禁自己的推进文案。
       if (state.execProofFailedGates.length > 0) execProofBlock();
+      // F-24：验签失败（可能伪造）优先，其次才是过期（日常状态）。
+      if (state.staleArtifactGates?.length > 0) staleArtifactBlock();
       if (state.toolUnavailableGates.length > 0) toolUnavailableBlock();
       // R15：编程规范（lint）硬门禁——QE 完成后、推进测试/收尾前必须通过。
       // 「没命令」「没配 linter」重跑都不会变，判据自带精确指引（`LINT_FAILURE_GUIDANCE`，
@@ -315,6 +338,17 @@ async function main() {
         if (!state.batchStorageReconPresent) {
           emitBlock(
             '【流程门禁】（R37 + R17）single-task 折叠通道的唯一测试轮次同样必须做业务数据存储对账：测试报告须含非空「## 存储对账记录」（分类型适用行 + 描述列完备 + 介质列 + 适用行 `test-results/recon/*.json` 证据文件，判据同 `mechanical-gates.md` §8.3）。若本次增量确无业务数据写入，须走 R17 双要素豁免，不得以「改动很小」为由跳过。',
+          );
+        }
+        // F-08：走「形状变、兼容未破」路径时，本轮须落地兼容性回归用例的执行记录。
+        // 这是 schema 硬禁用被拆分放松后换取的新增判据，缺了就等于白拿放松。
+        if (state.compatOnlySchemaChange && !state.incrementCompatRegressionPresent) {
+          emitBlock(
+            '【流程门禁】（R37/F-08 兼容性回归）「## 增量范围」声明「数据形状变更：是」+「需要迁移/破坏兼容：否」，' +
+            '故本次增量档可用——代价是本轮唯一测试必须落地**兼容性回归用例**。当前测试报告中未找到「兼容性回归」用例数据行。\n\n' +
+            '请由 test-engineer 在活跃 docs 子树 `test/` 的测试报告中补一条兼容性回归用例行（验证历史数据在新形状下仍可读写），' +
+            '例如：`| 兼容性回归 | R-00x | T-x | 历史无新字段的记录仍可读取与更新 | 通过 |`。\n\n' +
+            '若无法给出该用例，说明这次变更的兼容性其实没被验证过，须经 AskUserQuestion 改回 `workflow_mode: full` 走两轮测试。',
           );
         }
         if (!state.startupSmokePassed) {

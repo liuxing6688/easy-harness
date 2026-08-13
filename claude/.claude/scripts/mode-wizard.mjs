@@ -97,7 +97,7 @@ async function runWizard() {
       reason: '仅修改文档，无需开发流程',
       estimatedTime: '10-30 分钟',
       roles: 'PM（项目经理）直接操作',
-      description: '只允许修改 docs/**/*.md 文件，Hook 会拒绝任何源码写入',
+      description: 'Hook 会拒绝一切源码与构建产物写入（含 e2e/**）；文档与仓库元文件可改',
       startCommand: '使用 Harness Engineering 规约，按 docs-only 模式更新文档',
       warnings: [
         '此模式下无法修改源码文件',
@@ -181,24 +181,35 @@ async function runWizard() {
   // 新功能分支
   if (q1 === 0 || q1 === 3) {
     // 问题 3: 是否改 Schema
-    const q4 = await ask('是否会修改数据库结构、表 Schema 或数据模型？', [
-      '会，需要新增表、字段或修改现有结构',
+    // F-08：数据形状变更不再一刀切导向 full——判据落在**破坏性**上。
+    // 先问形状是否变，再问是否需要迁移/破坏向后兼容；只有后者为「是」才禁用增量档。
+    const q4 = await ask('是否会变更数据形状（新增/修改字段、表、集合）？', [
+      '会，需要新增或修改字段、表、集合',
       '不会，只改业务逻辑或界面',
     ]);
 
-    const changesSchema = q4 === 0;
+    const changesShape = q4 === 0;
+    let breakingChange = false;
 
-    if (changesSchema) {
+    if (changesShape) {
+      const q4b = await ask('该变更是否需要迁移脚本，或会破坏向后兼容？', [
+        '会，需要迁移脚本，或改了字段类型/主键/表结构、删改了既有字段',
+        '不会，只新增可选字段（有默认值），读取侧容忍缺失，无迁移脚本',
+      ]);
+      breakingChange = q4b === 0;
+    }
+
+    if (breakingChange) {
       printResult({
         mode: 'full',
-        reason: '涉及数据库 Schema 变更，必须使用完整流程',
+        reason: '涉及迁移脚本或破坏向后兼容的变更，必须使用完整流程',
         estimatedTime: '3-4 天',
         roles: 'PM → RA → SA → RR → DE → QE → TE（批次+最终）',
-        description: 'Schema 变更需要完整测试覆盖，包括数据迁移、兼容性测试、回滚方案',
+        description: '迁移与不兼容变更需要完整测试覆盖，包括数据迁移、兼容性测试、回滚方案',
         startCommand: '使用 Harness Engineering 规约，按 full 模式 [目标描述]',
         warnings: [
-          'Schema 变更禁止使用 single-task 模式',
-          '需要设计数据迁移脚本',
+          '需要迁移/破坏兼容的变更禁止使用 single-task 模式（R37/F-08）',
+          '需要设计数据迁移脚本与回滚方案',
           '测试会覆盖数据兼容性和回滚场景',
         ],
       });
@@ -224,14 +235,17 @@ async function runWizard() {
         description: '保留所有角色和验证，但测试折叠为单轮。豁免技术选型确认（沿用已有技术栈）',
         preconditions: [
           { met: true, text: '已有 detail-design-spec.md' },
-          { met: true, text: '不改数据库 Schema' },
+          { met: true, text: '不需要迁移脚本、不破坏向后兼容' },
           { met: newApi, text: newApi ? '会新增对外 API（需 R14 接口测试）' : '不新增 API' },
         ],
         startCommand: '使用 Harness Engineering 规约，按 single-task 模式 [目标描述]',
         warnings: [
-          'PM 会在 process.md 声明"增量范围"四维影响面',
+          'PM 会在 process.md 声明"增量范围"五维影响面',
           '所有质量门禁保留（R15/R16/R32/R34）',
           newApi ? 'R14 接口测试会并入单轮测试' : '',
+          changesShape
+            ? '数据形状有变更：须在"增量范围"两维说明中写明兼容性回归用例，并在单轮测试报告中落地其执行记录（R37/F-08），否则不得收尾'
+            : '',
           '设计审核 12 维度一个不省',
         ].filter(Boolean),
       });

@@ -29,8 +29,11 @@ import {
   resolveSecurityCommand,
   computeSubGate,
   computeStaticScanGate,
+  parseDupThreshold,
+  extractDupPercentage,
+  evaluateDuplicationReport,
 } from './static-scan-run-lib.mjs';
-import { attachExecutionProof } from '../hooks/lib/execproof.mjs';
+import { attachExecutionProof, warnIfUnsigned } from '../hooks/lib/execproof.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
@@ -96,6 +99,50 @@ function runCheck(resolveCommand, overrideKey) {
   };
 }
 
+/**
+ * 读取 jscpd JSON 报告（`--output` 目录下的 `jscpd-report.json`，兼容几种常见文件名）。
+ * 读不到返回 `null`，由 `evaluateDuplicationReport` 判为 `dup-report-unreadable`。
+ * @returns {any|null}
+ */
+function readDupReport() {
+  const candidates = [
+    path.join(PROJECT_ROOT, 'test-results/qe/.jscpd/jscpd-report.json'),
+    path.join(PROJECT_ROOT, 'test-results/qe/.jscpd/report.json'),
+    path.join(PROJECT_ROOT, 'test-results/qe/.jscpd/jscpd-report.json.json'),
+  ];
+  for (const file of candidates) {
+    if (!fs.existsSync(file)) continue;
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * 在退出码判据之上叠加报告判据（**F-13**）：只有「退出码 0」**且**「报告重复率 < 阈值」
+ * 才算通过。工具不可用（R38）保持原出口，不被报告判据覆盖——那是环境问题而非重复率问题。
+ * @param {{ gatePassed: boolean, reason: string, toolUnavailable?: boolean, command: string|null }} sub
+ * @returns {object}
+ */
+function applyDupReportGate(sub) {
+  if (!sub.command || sub.toolUnavailable === true) return sub;
+  const threshold = parseDupThreshold(sub.command);
+  const report = evaluateDuplicationReport({
+    percentage: extractDupPercentage(readDupReport()),
+    threshold,
+  });
+  return {
+    ...sub,
+    reportPercentage: report.percentage,
+    reportThreshold: report.threshold,
+    gatePassed: sub.gatePassed === true && report.ok === true,
+    reason: sub.gatePassed !== true ? sub.reason : report.ok ? 'passed' : report.reason,
+  };
+}
+
 /** 落盘 `.static-scan-result.json`（含 gatePassed 与两项子结果）。 */
 function writeResult(result) {
   fs.mkdirSync(RESULT_DIR, { recursive: true });
@@ -103,7 +150,7 @@ function writeResult(result) {
 }
 
 function main() {
-  const duplication = runCheck(resolveDupCommand, 'dupCheck');
+  const duplication = applyDupReportGate(runCheck(resolveDupCommand, 'dupCheck'));
   const security = runCheck(resolveSecurityCommand, 'securityScan');
 
   const gate = computeStaticScanGate({ duplication, security });
@@ -117,6 +164,7 @@ function main() {
   // R34：落签须在写盘之前，且签名覆盖两项子结果的 gatePassed。
   attachExecutionProof('static-scan', result);
   writeResult(result);
+  warnIfUnsigned(result); // F-03：未落签时给出与 stop 门禁一致的排查方向
   // 控制台省略子结果 output；完整输出已在产物文件中。
   console.log(
     JSON.stringify(

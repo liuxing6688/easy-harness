@@ -207,6 +207,94 @@ test('R29: 普通源码与成果物不被误判为自治资产', () => {
   }
 });
 
+// F-21：锁配置而不锁代码 → 改写运行器即可产出「恒 gatePassed」且被真实私钥签名的产物，
+// R34 验签通过、stop 门禁照单全收。故门禁代码/运行器/角色约束一律 gate-code（deny）。
+test('R29 加强（F-21）: settings.json 属 Hook 注册表，归 gate-config', () => {
+  for (const p of ['.claude/settings.json', '.claude/settings.local.json']) {
+    assert.equal(classifyHarnessSelfGovernedPath(p), 'gate-config');
+    assert.equal(harnessSelfGovernedVerdict('gate-config', p).permission, 'deny');
+  }
+});
+
+test('R29 加强（F-21）: 门禁判据本体与 lib/** 归类为 gate-code（deny）', () => {
+  for (const p of [
+    '.claude/hooks/gate-dev-workflow-enhanced.mjs',
+    '.claude/hooks/gate-stop-workflow.mjs',
+    '.claude/hooks/lib/execproof.mjs',
+    '.claude/hooks/lib/paths.mjs',
+  ]) {
+    assert.equal(classifyHarnessSelfGovernedPath(p), 'gate-code');
+    assert.equal(harnessSelfGovernedVerdict('gate-code', p).permission, 'deny');
+  }
+});
+
+test('R29 加强（F-21）: 机读证据运行器归类为 gate-code（含 *-run / *-lib）', () => {
+  for (const p of [
+    '.claude/scripts/e2e-run.mjs',
+    '.claude/scripts/e2e-run-lib.mjs',
+    '.claude/scripts/lint-run.mjs',
+    '.claude/scripts/static-scan-run.mjs',
+    '.claude/scripts/startup-smoke-run.mjs',
+    '.claude/scripts/exec-proof-sign.mjs',
+  ]) {
+    assert.equal(classifyHarnessSelfGovernedPath(p), 'gate-code');
+  }
+});
+
+test('R29 加强（F-21）: 角色强制约束与门禁自测归类为 gate-code', () => {
+  for (const p of [
+    '.claude/agents/development-engineer.md',
+    '.claude/agents/project-manager.md',
+    '.claude/scripts/tests/selftest/r6-paths.mjs',
+    '.claude/scripts/tests/scenarios/hardening.mjs',
+  ]) {
+    assert.equal(classifyHarnessSelfGovernedPath(p), 'gate-code');
+  }
+});
+
+test('R29 加强（F-21）: gate-code 提示指向「用户本人落盘」而非放行 DE', () => {
+  const v = harnessSelfGovernedVerdict('gate-code', '.claude/scripts/lint-run.mjs');
+  assert.equal(v.permission, 'deny');
+  assert.ok(/用户本人/.test(v.agentMessage));
+  assert.ok(/diff/i.test(v.agentMessage));
+});
+
+// R28 豁免的是「**调用**运行器」，不是「命令里**出现**运行器路径」。历史实现只匹配路径，
+// 于是 Shell 改写运行器会在 R29 归类之前早退放行，与 Write 通道判据相反。
+test('R28 加强（F-21）: 正常调用运行器仍豁免（不误伤日常执行）', () => {
+  for (const c of [
+    'node .claude/scripts/e2e-run.mjs --scope=final --baseline=docs/requirement/requirement-list.md',
+    'node .claude/scripts/lint-run.mjs',
+    'npx node .claude/scripts/static-scan-run.mjs',
+  ]) {
+    assert.deepEqual(classifyShellWriteIntent(c).selfGoverned, [], c);
+  }
+});
+
+test('R28 加强（F-21）: Shell 改写/删除运行器不再被豁免早退，归 gate-code', () => {
+  for (const c of [
+    'Set-Content .claude/scripts/lint-run.mjs -Value x',
+    'echo x > .claude/scripts/e2e-run.mjs',
+    'cp evil.mjs .claude/scripts/lint-run.mjs',
+    'rm .claude/scripts/e2e-run.mjs',
+  ]) {
+    const sg = classifyShellWriteIntent(c).selfGoverned;
+    assert.equal(sg.length, 1, c);
+    assert.equal(sg[0].kind, 'gate-code', c);
+  }
+});
+
+test('R29 加强（F-21）: 非门禁脚本与产品代码仍不受 gate-code 影响', () => {
+  for (const p of [
+    '.claude/scripts/bootstrap-docs.mjs',
+    '.claude/scripts/mode-wizard.mjs',
+    'src/server.ts',
+    'tests/unit/app.test.ts',
+  ]) {
+    assert.notEqual(classifyHarnessSelfGovernedPath(p), 'gate-code');
+  }
+});
+
 test('R29: harness-state.json 纳入角色门禁，期望 project-manager', () => {
   assert.equal(isHarnessStatePath('.claude/harness-state.json'), true);
   assert.equal(isGatedRoleArtifactPath('.claude/harness-state.json'), true);
@@ -493,4 +581,63 @@ test('R31: 非数字次数被忽略（不因占位符误判）', () => {
 
 test('R31: 默认上限为 3', () => {
   assert.equal(getRollbackLimit(), 3);
+});
+
+// ── F-26（2026-08-11 审核修复）：R28 由「枚举写文件命令」升级为「路径出现即裁决」 ──
+// 历史 SHELL_MUTATION_RE 只枚举 `sed -i` 一类命令名，于是同类工具换个名字即绕过。
+// 下面每条都是评审报告实测 ALLOW 的绕过链；`npx json -I -f docs/design/gated-artifacts.json`
+// 尤为严重——它能单方面取得 R22 双钥之一（该文件 Write 通道期望角色为 system-architect）。
+const F26_BYPASSES = [
+  ['npx --yes json -I -f package.json -e "this.scripts.start=1"', 'json -I 原地改写'],
+  ['npx --yes replace-in-file "/a/g" b src/server.js', 'replace-in-file'],
+  ['perl -pi -e "s/a/b/" src/server.js', 'perl -pi'],
+  ['yq -i ".a=1" src/config.yaml', 'yq -i'],
+  ['dasel -i -f src/config.json ".a=1"', 'dasel -i'],
+  ['ex -sc "%s/a/b/|wq" src/server.js', 'ex -sc'],
+  ['npm pkg set scripts.start="node evil.js"', 'npm pkg set（隐含 package.json）'],
+  ['npm version patch', 'npm version（隐含 package.json）'],
+];
+
+for (const [command, label] of F26_BYPASSES) {
+  test(`F-26: ${label} 须判定为写入并解析出受门禁目标`, () => {
+    const intent = classifyShellWriteIntent(command);
+    assert.equal(intent.mutates, true);
+    assert.equal(intent.targets.length + intent.selfGoverned.length > 0, true);
+  });
+}
+
+test('F-26: `npx json -I` 改写 gated-artifacts.json 须落进 targets（R22 双钥不得单方面取得）', () => {
+  const intent = classifyShellWriteIntent(
+    'npx --yes json -I -f docs/design/gated-artifacts.json -e "this.e2eAlternativeStartup=1"',
+  );
+  assert.equal(intent.mutates, true);
+  assert.equal(
+    intent.targets.some((t) => t.includes('gated-artifacts.json')),
+    true,
+  );
+});
+
+test('F-26: 路径敏感兜底不误伤纯读命令', () => {
+  for (const command of [
+    'cat src/server.js',
+    'grep -n foo src/server.js',
+    'rg --files-with-matches todo src',
+    'git diff docs/design/detail-design-spec.md',
+    'node --check src/server.js',
+  ]) {
+    assert.equal(classifyShellWriteIntent(command).mutates, false, command);
+  }
+});
+
+test('F-26: 路径敏感兜底不误伤正常构建/测试与门禁运行器', () => {
+  for (const command of [
+    'npm install',
+    'npm test',
+    'npm run build',
+    'npx playwright test',
+    'node .claude/scripts/lint-run.mjs',
+    'node .claude/scripts/e2e-run.mjs --scope=final',
+  ]) {
+    assert.equal(classifyShellWriteIntent(command).mutates, false, command);
+  }
 });

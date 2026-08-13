@@ -14,7 +14,7 @@ model: claude-haiku-4-5-20251001
 - **R14/R17/E2E 与 `gatePassed`**：执行面见本文件；说明权威见 `.claude/harness/spec/mechanical-gates.md` §8.3
 - **`gatePassed≠true` 不得推进下一批次或宣告完成**；豁免须双要素，仅一项不生效
 - **R34 执行证明**：`test-results/**` 机读产物须带门禁签发的 `execProof`。**禁止手工编辑这些产物**（含「只改一个 `gatePassed`」「补个缺失字段」「复用上一批次产物」）——签名覆盖除 `execProof` 外全部字段，改动会被识破为 `exec-proof-signature-mismatch`，与伪造测试结论同级。须**在代理 Shell 通道内**重跑对应 `*-run.mjs` 以取得新证明。例外：`test-results/recon/*.json`（R17 对账证据）仍由 TE 手写，但须是实际查验后的记录。
-- **R38 工具不可用 ≠ 检查未通过**：产物含 `toolUnavailable: true` 时，失败源于工具/依赖/网络/代理/证书，**不是**代码质量问题。不得编造违规项或缺陷来「解释」它；须回报 PM 走「标 blocking + AskQuestion 请用户决策」路径。说明权威见 `.claude/harness/spec/mechanical-gates.md` §8.8
+- **R38 工具不可用 ≠ 检查未通过**：产物含 `toolUnavailable: true` 时，失败源于工具/依赖/网络/代理/证书，**不是**代码质量问题。不得编造违规项或缺陷来「解释」它；须回报 PM 走「标 blocking + AskUserQuestion 请用户决策」路径。说明权威见 `.claude/harness/spec/mechanical-gates.md` §8.8
 - **执行权威始终是 Hook / `*-run.mjs`**，文档不得单独放宽（R12）
 
 ## 主要职责
@@ -94,6 +94,8 @@ node .claude/scripts/e2e-run.mjs --scope=final --baseline=<requirement-list.md �
 ```
 
 产物：`test-results/e2e/.e2e-batch-result.json` / `.e2e-final-result.json`，含 `gatePassed` 字段。**执行器仅 Chromium（Chrome 内核）headless**，无需安装或执行 Firefox/WebKit（`playwright.config.ts` 仅声明 `chromium` project）。`gatePassed` 公式与浏览器范围的说明权威见 `.claude/harness/spec/mechanical-gates.md` §8.3（执行权威：Hook/脚本）——浏览器范围是其中**唯一**允许简化的维度，覆盖率/追溯标签等判据不因此放松。
+
+**`playwright.config.ts` 不在本角色可写范围**：它位于项目根，属受门禁产品源码（§8.5 R6 `testConfigs`），期望角色为 **development-engineer**；本角色写它会被 R5/R21 直接 deny。模板已在项目根自带一份满足门禁的配置。若运行 `e2e-run.mjs` 报 `missing-playwright-config`，或需要改端口 / `webServer` 启动命令 / 挂载自建 `e2e/helpers`、`e2e/fixtures`，正确做法是**标记阻塞并回报 PM 分派 DE**，不得自行创建或改写；同理不得用 Shell 通道绕道写它（R28 同源拦截）。配置须满足的三条硬约束（`outputDir` **不得**是 `test-results/qe`、`test-results/e2e`、`test-results/recon` 的祖先或自身、JSON reporter 固定 `test-results/e2e/pw-report.json`、仅 `chromium` project）见 §8.3「Playwright 配置约束」——其中 `outputDir` 一条尤为要紧：Playwright 每次运行前清空 `outputDir`，一旦指向 `test-results/` 会把 lint / 静态扫描 / 启动冒烟 / 对账等**全部机读门禁证据**一并删除。该条**已由机械层强制**：`e2e-run.mjs` 在跑 Playwright 之前自检，报 `playwright-outputdir-clobbers-gate-artifacts` / `-undeclared` / `-not-literal` 时同样属「回报 PM 分派 DE 改配置」，**不是**本角色可自行修的，也**不是** R38 工具不可用（不得按环境问题申请豁免）。
 
 ## `coverage-waivers.json`
 

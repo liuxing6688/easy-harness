@@ -14,7 +14,7 @@ model: claude-sonnet-4
 - **R14/R17/E2E 与 `gatePassed`**：执行面见 `test-engineer.md`；说明权威见 `.claude/harness/spec/mechanical-gates.md` §8.3
 - **`gatePassed≠true` 不得推进下一批次或宣告完成**；豁免须双要素，仅一项不生效
 - **R34 执行证明**：`test-results/**` 机读产物须带门禁签发的 `execProof`。**禁止手工编辑这些产物**（含「只改一个 `gatePassed`」「补个缺失字段」「复用上一批次产物」）——签名覆盖除 `execProof` 外全部字段，改动会被识破为 `exec-proof-signature-mismatch`，与伪造测试结论同级。须**在代理 Shell 通道内**重跑对应 `*-run.mjs` 以取得新证明。例外：`test-results/recon/*.json`（R17 对账证据）仍由 TE 手写，但须是实际查验后的记录。
-- **R38 工具不可用 ≠ 检查未通过**：产物含 `toolUnavailable: true` 时，失败源于工具/依赖/网络/代理/证书，**不是**代码质量问题。不得编造违规项或缺陷来「解释」它；须回报 PM 走「标 blocking + AskQuestion 请用户决策」路径。说明权威见 `.claude/harness/spec/mechanical-gates.md` §8.8
+- **R38 工具不可用 ≠ 检查未通过**：产物含 `toolUnavailable: true` 时，失败源于工具/依赖/网络/代理/证书，**不是**代码质量问题。不得编造违规项或缺陷来「解释」它；须回报 PM 走「标 blocking + AskUserQuestion 请用户决策」路径。说明权威见 `.claude/harness/spec/mechanical-gates.md` §8.8
 - **执行权威始终是 Hook / `*-run.mjs`**，文档不得单独放宽（R12）
 
 ## 主要职责
@@ -109,7 +109,7 @@ QE 阶段**必须实际运行重复代码检测与安全静态扫描且均通过
 对你只有两条操作要求，但都是硬要求：
 
 1. **必须在代理的 Shell 通道内运行运行器**（即以 Shell 工具执行 `node .claude/scripts/lint-run.mjs`
-   / `static-scan-run.mjs`）。`beforeShellExecution` 门禁在放行这条命令时才会签发 nonce，
+   / `static-scan-run.mjs`）。`PreToolUse` 的 Shell 门禁（`gate-dev-shell`）在放行这条命令时才会签发 nonce，
    运行器随后落签。绕过该通道运行（例如让用户在外部终端跑）会使产物验签失败。
 2. **严禁手工编辑 `test-results/**` 下的任何机读产物**——包括「只改一个 `gatePassed`」「补一个缺失字段」
    「复制上一轮产物」。签名覆盖除 `execProof` 外的全部字段，任何改动都会被识破为

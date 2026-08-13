@@ -16,7 +16,9 @@ import {
   sectionHasDataRow,
   readProcessMd,
   readTextFileSafe,
-  readJsonFileSafe
+  readJsonFileSafe,
+  splitTableRow,
+  isTableSeparatorLine
 } from './core.mjs';
 import { verifyExecutionProof, checkArtifactFreshness } from './execproof.mjs';
 
@@ -57,8 +59,13 @@ export function evaluateGateArtifact({
   const proof = verifyExecutionProof(kind, artifact);
   if (!proof.ok) return { ok: false, reason: proof.reason, message: proof.message };
 
+  // F-24（2026-08-11 审核修复）：`staleArtifact: true` 让上层把「产物过期」与「验签失败」
+  // 分成两类文案。过期是**正常且高频**的状态（改一行源码即发生），旧实现把它并入
+  // 「产物未通过验签」，首句即断言「可能是手工编辑」，把日常状态叙述成造假嫌疑。
   const fresh = checkArtifactFreshness(kind, artifact);
-  if (!fresh.ok) return { ok: false, reason: fresh.reason, message: fresh.message };
+  if (!fresh.ok) {
+    return { ok: false, reason: fresh.reason, message: fresh.message, staleArtifact: true };
+  }
 
   if (artifact.toolUnavailable === true && !isPassed(artifact)) {
     return {
@@ -85,7 +92,7 @@ export function toolUnavailableMessage(kind, artifact) {
     '不是代码质量不达标——请勿按「整改问题」的路径处理。' +
     '本门禁**不因工具不可用而放行**（R12：网络一断即免检属放松），但解法不同：' +
     '须由项目经理将 frontmatter `blocking` 置为 true、在「## 阻塞原因」写明工具不可用的具体证据，' +
-    '并用 AskQuestion 请用户在三条路径中决策——①安装/修复工具或网络（含企业代理、证书、离线镜像）；' +
+    '并用 AskUserQuestion 请用户在三条路径中决策——①安装/修复工具或网络（含企业代理、证书、离线镜像）；' +
     '②在 `harness.config.json` 配置可离线执行的等价命令覆盖（`qe.commands.*` / `te.startupSmoke.command`，' +
     '该文件受 R29 锁定，须**用户本人**编辑）；③确认本项目确不适用该检查，走对应门禁的双要素豁免。' +
     '不得由代理自行选择其中任何一条。'
@@ -159,17 +166,45 @@ export function checkHotfixDesign(content) {
 /**
  * **R37** 必填影响面维度。键为机读关键词正则，值为人话名称（用于报错文案）。
  *
- * 这四维不是随手挑的，它们对应「增量能否安全折叠测试轮次」的四个判断：
- * 接口与交互面决定 R14/E2E 是否必须落地新用例；schema 变更决定这次改动是否**根本不该**
- * 走增量档（数据模型改动的回滚面与兼容面远超单轮测试能覆盖的范围）；
- * 既有行为决定回归范围。缺任一维，「折叠成一轮测试」就失去论证基础。
+ * 这几维不是随手挑的，它们对应「增量能否安全折叠测试轮次」的判断：接口与交互面决定
+ * R14/E2E 是否必须落地新用例；既有行为决定回归范围；数据形状与迁移/兼容性两维**一起**
+ * 决定这次改动是否根本不该走增量档。缺任一维，「折叠成一轮测试」就失去论证基础。
+ *
+ * **F-08（2026-08-11 审核修复；放松方向，经用户确认，留痕见 `mechanical-gates.md` §8.5）**：
+ * 历史实现只有一个 `schema` 维，填「是」即硬禁用增量档，**不区分变更性质**。而「加一个
+ * 向后兼容的可选字段、无迁移脚本」与「重命名主键、拆表、改类型」在兼容面与回滚面上相差极大
+ * ——加字段恰恰是最常见的增量形态，于是 R37 引入增量档要解决的「已有设计的项目要加个小功能
+ * 没有任何可用路径」，又被这一刀切关掉了大半（`SPEC_REVIEW_V2.md` F-08 / 建议 #18）。
+ * 现拆为两维，并把判据落到**破坏性**上：
+ *   - `schema`（数据形状是否变化）：填「是」**不再**单独禁用增量档；
+ *   - `migration`（需要迁移脚本 / 破坏向后兼容）：填「是」**硬禁用**，须改走 `full`。
+ * 新开的这条路径不是白给的：它换来一条**新增**判据——「形状变、兼容未破」时须声明
+ * 兼容性回归用例，并在折叠通道的唯一测试轮次里落地其执行记录
+ * （`checkIncrementCompatRegressionReport`，`qe.mjs`）。不得由被约束方自行论证
+ * 「我这个 schema 变更很小所以不算」：「是否破坏兼容」是一次**如实声明**，
+ * 声明「否」却实际提交迁移脚本属虚假声明（复盘清单 B13）。
+ *
+ * 正则划分注意：`schema` 维**不再**吃 `迁移|migration`，否则旧标题「数据模型 / schema 变更」
+ * 会同时命中两维，`migration` 维永远匹配到同一行，拆维等于没拆。
  */
 export const INCREMENT_SCOPE_DIMENSIONS = Object.freeze([
   { key: 'api', re: /接口|\bapi\b/i, label: '新增/变更对外接口' },
-  { key: 'schema', re: /数据模型|\bschema\b|迁移|migration/i, label: '数据模型 / schema 变更' },
+  {
+    key: 'schema',
+    re: /数据形状|数据模型|\bschema\b/i,
+    label: '数据形状变更（新增/修改字段、表、集合）',
+  },
+  {
+    key: 'migration',
+    re: /迁移|migration|向后兼容|破坏性/i,
+    label: '需要迁移脚本 / 破坏向后兼容',
+  },
   { key: 'surface', re: /交互面|新增页面|新增入口|新增命令/i, label: '新增交互面（页面/命令/入口）' },
   { key: 'behavior', re: /既有行为|已有行为|回归范围/i, label: '影响的既有行为' },
 ]);
+
+/** F-08：兼容性回归用例声明的机读词表（`schema=是 && migration=否` 时必填于说明列） */
+const COMPAT_REGRESSION_RE = /兼容性?回归/;
 
 const AFFECTED_YES_RE = /^(是|yes|y|涉及)$/i;
 const AFFECTED_NO_RE = /^(否|no|n|不涉及|无)$/i;
@@ -180,6 +215,23 @@ function meaningfulLength(text) {
     .replace(/[\s\p{P}\p{S}]/gu, '')
     .length;
 }
+
+/**
+ * R33 判据词表（**F-28** 2026-08-11 审核修复：按列判定，不再整行 OR 命中）。
+ *
+ * 历史实现对整行同时测 topic 与 stance 两个正则，且 `布局` / `默认` 同时属于两个词表，
+ * 于是 `| 备注 | … | UI 布局稍后再定 |`——一行**明说尚未确认**的无关备注——反而满足判据；
+ * 摘要留空的 `| 界面与交互期望 | … |  |` 同样过关。现拆成两列各管一段：
+ *   - `UI_TOPIC_RE` 只测「确认项」列：这一行必须**是**界面维度的确认，而非顺口提到 UI；
+ *   - `UI_STANCE_RE` 只测摘要列，且摘要须有实质字数：用户得真表了态。
+ * 同属两侧的 `布局` / `默认` 只留在各自该在的一侧（`布局` 属 topic 也属 stance 语义，
+ * 故 stance 侧保留但不再能与 topic 侧互相顶替，因为两者已不看同一段文本）。
+ */
+const UI_TOPIC_RE = /界面|\bUI\b|交互|视觉|外观|布局/i;
+const UI_STANCE_RE =
+  /期望|对标|参考|风格|布局|导航|信息架构|默认|不适用|无\s*UI|无界面|确认|接受/i;
+/** 摘要列去标点后的最小字数：与 R37「说明」列同口径（4 字），防空确认与「-」占位 */
+const UI_SUMMARY_MIN_LEN = 4;
 
 /**
  * **R37**：解析 `process.md`「## 增量范围」表。
@@ -222,7 +274,7 @@ export function checkIncrementScopeDeclared(content) {
     return {
       ok: false,
       reason: parsed.reason,
-      message: `R37：single-task（增量迭代）须在 process.md「## 增量范围」声明四维影响面（${INCREMENT_SCOPE_DIMENSIONS.map((d) => d.label).join('、')}），每维填「是/否」+ 实质说明。当前判定：${parsed.reason}。未声明增量范围前不得进入开发——折叠测试轮次的前提正是「改动面已被界定」。`,
+      message: `R37：single-task（增量迭代）须在 process.md「## 增量范围」声明 ${INCREMENT_SCOPE_DIMENSIONS.length} 维影响面（${INCREMENT_SCOPE_DIMENSIONS.map((d) => d.label).join('、')}），每维填「是/否」+ 实质说明。当前判定：${parsed.reason}。未声明增量范围前不得进入开发——折叠测试轮次的前提正是「改动面已被界定」。`,
     };
   }
 
@@ -249,16 +301,67 @@ export function checkIncrementScopeDeclared(content) {
         message: `R37：「${dim.label}」的「说明」为空或过短（去标点后不足 4 字），须写明具体范围或「不涉及」的依据。`,
       };
     }
-    if (dim.key === 'schema' && AFFECTED_YES_RE.test(row.affected)) {
+    if (dim.key === 'migration' && AFFECTED_YES_RE.test(row.affected)) {
       return {
         ok: false,
-        reason: 'increment-scope-schema-change',
+        reason: 'increment-scope-breaking-change',
         message:
-          'R37：本次增量声明涉及数据模型 / schema 变更，**禁止**使用 single-task（`workflow-modes.md` 迭代分诊表既有规定，现补为机械判据）。schema 改动的兼容面与回滚面超出单轮折叠测试的覆盖能力，须经 AskQuestion 改回 `workflow_mode: full` 并走批次 + 最终两轮测试。',
+          'R37：本次增量声明**需要迁移脚本或破坏向后兼容**，禁止使用 single-task。迁移与不兼容变更的兼容面与回滚面超出单轮折叠测试的覆盖能力，须经 AskUserQuestion 改回 `workflow_mode: full` 并走批次 + 最终两轮测试。若数据形状虽变但**向后兼容且无迁移**（如新增可选字段），请把本维如实改为「否」，并在说明列声明兼容性回归用例（F-08）。',
       };
     }
   }
+
+  // F-08：「形状变、兼容未破」是本次新开的增量档路径，代价是一条**新增**判据——
+  // 须在说明列声明兼容性回归用例（并在折叠通道的唯一测试轮次落地，见
+  // `checkIncrementCompatRegressionReport`）。缺声明即回退为拒绝，等价于旧的硬禁用。
+  const schemaRow = parsed.rows.find((r) => /数据形状|数据模型|\bschema\b/i.test(r.dimension));
+  const migrationRow = parsed.rows.find((r) => /迁移|migration|向后兼容|破坏性/i.test(r.dimension));
+  if (
+    schemaRow &&
+    migrationRow &&
+    AFFECTED_YES_RE.test(schemaRow.affected) &&
+    AFFECTED_NO_RE.test(migrationRow.affected) &&
+    !COMPAT_REGRESSION_RE.test(`${schemaRow.note} ${migrationRow.note}`)
+  ) {
+    return {
+      ok: false,
+      reason: 'increment-scope-missing-compat-regression',
+      message:
+        'R37/F-08：声明「数据形状变更：是」+「需要迁移/破坏兼容：否」时增量档可用，但须在这两维的「说明」列写明**兼容性回归用例**（例：「兼容性回归：历史无 dueDate 字段的待办仍可正常读取与更新」），并在折叠通道的唯一测试轮次里落地该用例。这是换取本路径的新增判据，不得省略；不写则按破坏性变更处理，改走 `full`。',
+    };
+  }
   return { ok: true, reason: 'checked' };
+}
+
+/**
+ * **F-09**：「## 增量范围」里「是否涉及」为**是**的维度行（供 design 侧与 `requirement-list.md`
+ * 做本轮编号交叉校验）。解析失败时返回空数组——缺声明本身已由
+ * `checkIncrementScopeDeclared` 单独拒绝，此处不重复报错。
+ * @returns {Array<{ dimension: string, affected: string, note: string }>}
+ */
+export function getIncrementScopeYesRows(content) {
+  const parsed = parseIncrementScope(content ?? '');
+  if (!parsed.ok) return [];
+  return parsed.rows.filter((r) => AFFECTED_YES_RE.test(r.affected));
+}
+
+/** F-09 交叉校验用：迁移维不参与「须立需求编号」判据（该维为「是」时增量档本就失效） */
+export function isMigrationDimension(dimension) {
+  return /迁移|migration|向后兼容|破坏性/i.test(String(dimension ?? ''));
+}
+
+/**
+ * **F-08**：本次增量是否走了「形状变、兼容未破」路径（据此决定折叠通道是否额外要求
+ * 兼容性回归用例执行记录）。非 single-task 或未如实声明两维时返回 false——判据只在
+ * 该路径被显式选用时加码，不影响任何既有场景（R12：只加强，不外溢）。
+ */
+export function isCompatOnlySchemaChange(content) {
+  const parsed = parseIncrementScope(content ?? '');
+  if (!parsed.ok) return false;
+  const schemaRow = parsed.rows.find((r) => /数据形状|数据模型|\bschema\b/i.test(r.dimension));
+  const migrationRow = parsed.rows.find((r) => /迁移|migration|向后兼容|破坏性/i.test(r.dimension));
+  if (!schemaRow || !migrationRow) return false;
+  return AFFECTED_YES_RE.test(schemaRow.affected) && AFFECTED_NO_RE.test(migrationRow.affected);
 }
 
 /**
@@ -266,14 +369,40 @@ export function checkIncrementScopeDeclared(content) {
  * 与 hotfix 的 R9 前置校验同构：没有 `detail-design-spec.md` 说明这是从零开发，
  * 应走 `full`，而不是用增量档跳过技术选型确认（R26）。
  */
+/**
+ * Feature 子树的**父级**基线设计路径（`…/docs/<feature>/` → `…/docs/design/…`）。
+ * 活跃流程不是 feature 布局（父目录名不是 `docs`）时返回 `null`——不给回落。
+ * @returns {string|null}
+ */
+function resolveParentBaselineDesignPath() {
+  const base = getActiveDocsBase();
+  const parent = path.dirname(base);
+  if (path.basename(parent).toLowerCase() !== 'docs') return null;
+  return path.join(parent, 'design/detail-design-spec.md');
+}
+
 export function checkSingleTaskBaseDesign() {
   const designPath = path.join(getActiveDocsBase(), 'design/detail-design-spec.md');
   if (fs.existsSync(designPath)) return { ok: true, reason: 'checked' };
+  // F-07（2026-08-11 审核修复）：增量档在 Feature 迭代下**必然**踩空——`bootstrap-docs.mjs
+  // --feature=x` 只建空目录，活跃子树里当然没有 detail-design-spec.md，于是「增量档」在
+  // 它最该适用的场景（已有 greenfield 基线、为新功能建子树）100% 不可用。基线本就允许来自
+  // 父级 greenfield 子树（增量是「对既有设计做增量」，没规定基线必须与本轮同目录），
+  // 故回落到仓库根 `docs/design/detail-design-spec.md` 再判一次。
+  // 这不是放松（R12）：判据仍是「必须存在一份基线设计」，只是不再要求它与活跃子树同目录；
+  // 真正首次开发的项目两处都没有该文件，照旧被拒。
+  // 回落**只对 Feature 子树生效**：活跃流程须形如 `…/docs/<feature>/process/process.md`，
+  // 父级基线则取同一 docs 树的 `…/docs/design/detail-design-spec.md`。非 feature 布局
+  // （含 greenfield 根子树）不给回落——否则任意路径的流程文件都能借用仓库根的设计文档。
+  const parentDesignPath = resolveParentBaselineDesignPath();
+  if (parentDesignPath && parentDesignPath !== designPath && fs.existsSync(parentDesignPath)) {
+    return { ok: true, reason: 'checked-parent-baseline', designPath: parentDesignPath };
+  }
   return {
     ok: false,
     reason: 'single-task-base-design-missing',
     message:
-      'R37：single-task 是**增量迭代**档，前提是项目已有 detail-design-spec.md（增量所依附的基线设计）。当前活跃 docs 子树下不存在该文件，说明这其实是首次开发——须改走 `workflow_mode: full`（含技术选型 R26 确认），不得用增量档绕过基线设计与选型确认。',
+      'R37：single-task 是**增量迭代**档，前提是项目已有 detail-design-spec.md（增量所依附的基线设计）。当前活跃 docs 子树与父级 `docs/design/` 下均不存在该文件，说明这其实是首次开发——须改走 `workflow_mode: full`（含技术选型 R26 确认），不得用增量档绕过基线设计与选型确认。',
   };
 }
 
@@ -358,15 +487,20 @@ export function checkImplicitRequirementRecord(specContent) {
 export function hasUiExpectationConfirmation(content) {
   const body = extractSection(content ?? '', '用户确认记录');
   if (!body) return false;
-  const uiTopicRe = /界面|\bUI\b|交互|视觉|外观|布局/i;
-  const stanceRe = /期望|对标|参考|风格|布局|导航|信息架构|默认|不适用|无\s*UI|无界面|确认|接受/i;
   for (const line of body.split('\n')) {
     const t = line.trim();
     if (!t.startsWith('|')) continue;
-    if (/^\|[\s|:-]+\|?$/.test(t)) continue;
+    if (isTableSeparatorLine(t)) continue;
     // 跳过表头行（表头本身不含界面类词时不会误命中，这里只防表头恰好含「交互」等字样）
     if (/确认项/.test(t) && /时间/.test(t) && /用户原话/.test(t)) continue;
-    if (uiTopicRe.test(t) && stanceRe.test(t)) return true;
+    const cells = splitTableRow(t);
+    if (cells.length < 3) continue;
+    // 按列判定（F-28）：topic 只认「确认项」列，stance 只看摘要列。
+    if (!UI_TOPIC_RE.test(cells[0])) continue;
+    const summary = cells[cells.length - 1];
+    if (meaningfulLength(summary) < UI_SUMMARY_MIN_LEN) continue;
+    if (!UI_STANCE_RE.test(summary)) continue;
+    return true;
   }
   return false;
 }

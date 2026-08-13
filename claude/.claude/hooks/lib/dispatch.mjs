@@ -19,6 +19,7 @@ import {
   checkRequirementReady,
   checkHotfixDesign,
   checkSingleTaskPreconditions,
+  isCompatOnlySchemaChange,
 } from './iteration.mjs';
 import {
   checkDesignReady,
@@ -26,6 +27,7 @@ import {
   checkTechSelectionConfirmed,
   checkHotfixP0Impact,
   checkIsomorphicModuleSectionReady,
+  checkIncrementScopeRequirementCrossCheck,
 } from './design.mjs';
 import {
   extractQeDispatchTaskPacks,
@@ -43,6 +45,7 @@ import {
   checkE2eGate,
   checkBatchApiTestReport,
   checkBatchStorageReconciliationReport,
+  checkIncrementCompatRegressionReport,
 } from './qe.mjs';
 import { roleProgressStats, testEngineerStats } from './role-path.mjs';
 
@@ -88,13 +91,19 @@ export function checkRoleDispatchGate(role) {
   switch (role) {
     case 'system-architect': {
       if (mode === 'hotfix' || mode === 'docs-only') return { ok: true, reason: `${mode}-exempt` };
-      // R37：single-task 须先证明「这是增量」——基线设计存在 + 增量范围四维已声明。
+      // R37：single-task 须先证明「这是增量」——基线设计存在 + 增量范围五维已声明（F-08）。
       // 置于需求就绪校验之前：范围没界定清楚，需求澄清的边界本身就无从判断。
       if (mode === 'single-task') {
         const st = checkSingleTaskPreconditions(content);
         if (!st.ok) return st;
       }
       const r = checkRequirementReady();
+      if (r.ok) {
+        // R37/F-09：增量档第二轮起，「增量范围」声明的每个「是」都须对应本轮新立需求编号。
+        // 置于 requirement 就绪之后：先有本轮需求清单，才谈得上交叉校验。
+        const cross = checkIncrementScopeRequirementCrossCheck(content);
+        if (!cross.ok) return cross;
+      }
       return r.ok
         ? { ok: true, reason: 'checked' }
         : {
@@ -128,7 +137,7 @@ export function checkRoleDispatchGate(role) {
         };
       }
       if (mode !== 'hotfix' && mode !== 'docs-only') {
-        // R37：single-task 豁免 R26 技术选型确认——技术栈在基线项目里已经过 AskQuestion
+        // R37：single-task 豁免 R26 技术选型确认——技术栈在基线项目里已经过 AskUserQuestion
         // 确认并落痕，增量迭代不换栈，再要求一次确认只是重复劳动。**R25 同构模块识别
         // 不豁免**：增量最容易「复制既有实现改两行」，正是 R25 要拦的场景。
         if (mode !== 'single-task') {
@@ -179,6 +188,9 @@ export function checkRoleDispatchGate(role) {
         // 豁免的只有 R26 技术选型确认；R18 设计审核一条不减。
         const st = checkSingleTaskPreconditions(content);
         if (!st.ok) return st;
+        // R37/F-09：与派 SA 同一条交叉校验——否则跳过 SA 直接派 DE 就能绕过它。
+        const cross = checkIncrementScopeRequirementCrossCheck(content);
+        if (!cross.ok) return cross;
         const d = checkDesignReady();
         if (!d.ok) {
           return { ok: false, reason: d.reason, message: '设计成果物未就绪，不得发起开发工程师。' };
@@ -308,6 +320,8 @@ export function parseWorkflowState(content) {
       batchApiReportPresent: false,
       storageReconciliationExempt: false,
       batchStorageReconPresent: false,
+      compatOnlySchemaChange: false, // F-08
+      incrementCompatRegressionPresent: true, // F-08：未走该路径时不构成额外判据
       lintExempt: false,
       lintPassed: false,
       lintReason: 'no-process',
@@ -322,6 +336,7 @@ export function parseWorkflowState(content) {
       finalE2eReason: 'no-process',
       toolUnavailableGates: [],
       execProofFailedGates: [],
+      staleArtifactGates: [],
       batchTestComplete: false,
       finalTestComplete: false,
       finalTestRequired: false,
@@ -411,6 +426,14 @@ export function parseWorkflowState(content) {
       batchStorageReconPresent &&
       startupSmokePassed;
 
+  // **F-08**：走「数据形状变更：是 + 需要迁移/破坏兼容：否」这条新开的增量档路径时，
+  // 折叠通道额外要求兼容性回归用例的执行记录——这是放松 schema 硬禁用换来的新增判据。
+  // 未走该路径（含全部非 single-task 场景）时恒真，不外溢到任何既有判据。
+  const compatOnlySchemaChange = isSingleTask && isCompatOnlySchemaChange(content);
+  const incrementCompatRegressionPresent = compatOnlySchemaChange
+    ? checkIncrementCompatRegressionReport().ok
+    : true;
+
   // R37 关键差异：single-task 的折叠通道把 R14/R17 **并入最终判据**。
   // hotfix 之所以能跳过，是因为热修不新增接口/存储面；增量功能没有这个前提，
   // 若照抄 R11 就等于「小改动可以不做接口测试和存储对账」——那是放松（R12）。
@@ -419,7 +442,9 @@ export function parseWorkflowState(content) {
     : finalTestRowComplete &&
       finalE2ePassed &&
       startupSmokePassed &&
-      (isSingleTask ? batchApiReportPresent && batchStorageReconPresent : true);
+      (isSingleTask
+        ? batchApiReportPresent && batchStorageReconPresent && incrementCompatRegressionPresent
+        : true);
 
   const finalTestRequired = isDocsOnly
     ? false
@@ -439,8 +464,19 @@ export function parseWorkflowState(content) {
   const toolUnavailableGates = gateVerdicts
     .filter(([, v]) => v?.toolUnavailable === true)
     .map(([label]) => label);
+  // F-24：过期（`staleArtifact`）与验签失败分列。两者的正确处置都是「重跑运行器」，
+  // 但前者的成因是「代码变了」，后者才涉及「产物可能被手写/替换」——共用一句
+  // 造假嫌疑的文案会把高频的日常状态叙述成违规。
+  const staleArtifactGates = gateVerdicts
+    .filter(([, v]) => v?.staleArtifact === true)
+    .map(([label]) => label);
   const execProofFailedGates = gateVerdicts
-    .filter(([, v]) => typeof v?.reason === 'string' && v.reason.startsWith('exec-proof-'))
+    .filter(
+      ([, v]) =>
+        v?.staleArtifact !== true &&
+        typeof v?.reason === 'string' &&
+        v.reason.startsWith('exec-proof-'),
+    )
     .map(([label]) => label);
 
   return {
@@ -459,6 +495,8 @@ export function parseWorkflowState(content) {
     batchApiReportPresent,
     storageReconciliationExempt,
     batchStorageReconPresent,
+    compatOnlySchemaChange, // F-08
+    incrementCompatRegressionPresent, // F-08
     lintExempt,
     lintPassed,
     lintReason: lint.reason,
@@ -473,6 +511,7 @@ export function parseWorkflowState(content) {
     finalE2eReason: finalE2e.reason,
     toolUnavailableGates,
     execProofFailedGates,
+    staleArtifactGates,
     batchTestComplete,
     finalTestComplete,
     finalTestRequired,

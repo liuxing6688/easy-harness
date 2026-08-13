@@ -94,6 +94,33 @@ test('R33: 补齐界面期望确认后允许发起 system-architect', () => {
   assert.equal(checkRoleDispatchGate('system-architect').ok, true);
 });
 
+// ── F-28（2026-08-11 审核修复）：按列判定，整行 OR 命中不再算确认 ──────────────
+// 历史实现对**整行**同时测 topic / stance 两个正则，而 `布局`、`默认` 同属两个词表，
+// 于是一行顺口提到 UI 的无关备注即可满足判据——哪怕它说的正是「还没定」。
+
+test('F-28: 顺口提到 UI 的无关备注行不算界面期望确认', () => {
+  const content = processWith([
+    '| 备注 | 2026-08-11 | UI 布局稍后再定 |',
+  ]);
+  assert.equal(hasUiExpectationConfirmation(content), false);
+  assert.equal(checkUiExpectationConfirmed(content).reason, 'no-ui-expectation-confirmation');
+});
+
+test('F-28: 确认项对了但摘要为空/占位，不算已表态', () => {
+  for (const summary of ['', ' ', '-', '……']) {
+    const content = processWith([`| 界面与交互期望 | 2026-08-11 | ${summary} |`]);
+    assert.equal(hasUiExpectationConfirmation(content), false);
+  }
+});
+
+test('F-28: 摘要写「布局」但确认项非界面维度，不能顶替', () => {
+  // stance 词落在摘要列、topic 词却不在确认项列——两列各管一段，无法互相顶替。
+  const content = processWith([
+    '| 技术选型 | 2026-08-11 | 确认采用 Ant Design 默认布局 |',
+  ]);
+  assert.equal(hasUiExpectationConfirmation(content), false);
+});
+
 test('R33: hotfix / docs-only 不走 RA→SA 路径，豁免本判据', () => {
   fixtureProcess(
     [

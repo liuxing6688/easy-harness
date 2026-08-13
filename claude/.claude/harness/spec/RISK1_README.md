@@ -1,5 +1,10 @@
 # 风险1优化 - 权限模式依赖防护（v2.1）
 
+> **⚠️ 历史留痕（2026-08-06 交付期快照）**：本文的部署步骤以 `.claude/hooks/hooks.json`
+> 与 `hooks-v2.1.json` 为对象，**这两个文件现已不存在**。Hook 注册的**唯一权威源是
+> `.claude/settings.json`**，本方案的防护已随 `gate-dev-workflow-enhanced.mjs` 与
+> `session-init-enhanced.mjs` 注册生效。本文仅作方案留痕，**不要照其步骤操作**。
+
 ## 🎯 优化概览
 
 **目标**：消除 auto 权限模式绕过关键门禁的风险  

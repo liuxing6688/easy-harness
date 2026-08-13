@@ -23,9 +23,77 @@ import { applyToolAvailability } from './tool-availability-lib.mjs';
  * 后果是任何真实宿主项目都不可能通过 R16——与 R19 出厂模板缺陷同级的硬阻塞。
  * 移除 `--exitCode` 是让实现回到**文档声明的判据**（5% 阈值），不是放松门禁（R12）。
  * 回归见 `tests/selftest/r16-static-scan.mjs`「默认命令不得含 --exitCode」。
+ *
+ * **`--ignore` 须排除 harness 自身（2026-08-11 审核修复 F-13）**：历史默认值
+ * 未排除 `.claude/**` 与 `migration/**`，于是门禁自身的 3 万余行（含 `tests/**` 里成片
+ * 同构的 fixture 与用例）全部进入重复率**分母**。实测本仓库：`lines: 32120 / sources: 204`，
+ * 49 对克隆中 48 对落在 `.claude/scripts/tests/**` 与 `migration/docs/**`，业务侧重复率
+ * 被摊薄两个数量级。效果等价于把阈值放大到不可达——规约只防了「把门槛调松」（禁止提高
+ * `--threshold`），没防「把分母掺大」。两者对门禁判别力的影响同向，故一并禁止（R12）。
  */
 export const DEFAULT_DUP_COMMAND =
-  'npx --yes jscpd-rs --threshold 5 --reporters json --output test-results/qe/.jscpd --ignore "**/node_modules/**,**/dist/**,**/build/**,**/.git/**,**/test-results/**,**/vendor/**,**/target/**,**/coverage/**" .';
+  'npx --yes jscpd-rs --threshold 5 --reporters json --output test-results/qe/.jscpd --ignore "**/node_modules/**,**/dist/**,**/build/**,**/.git/**,**/test-results/**,**/vendor/**,**/target/**,**/coverage/**,**/.claude/**,**/migration/**" .';
+
+/** 默认重复率阈值（%）；`--threshold` 缺省时按此值比对报告。 */
+export const DEFAULT_DUP_THRESHOLD = 5;
+
+/**
+ * 从重复检测命令里解析 `--threshold N`（缺省/非法回退 `DEFAULT_DUP_THRESHOLD`）。
+ * 供 `evaluateDuplicationReport` 与报告 `percentage` 比对，使判据不再只依赖退出码。
+ * @param {string|null} command
+ * @returns {number}
+ */
+export function parseDupThreshold(command) {
+  if (typeof command !== 'string') return DEFAULT_DUP_THRESHOLD;
+  const matched = command.match(/--threshold[=\s]+([0-9]+(?:\.[0-9]+)?)/);
+  if (!matched) return DEFAULT_DUP_THRESHOLD;
+  const value = Number.parseFloat(matched[1]);
+  return Number.isFinite(value) ? value : DEFAULT_DUP_THRESHOLD;
+}
+
+/**
+ * 从 jscpd JSON 报告对象里取总重复率（%）。兼容 jscpd / jscpd-rs 的几种字段位置；
+ * 取不到返回 `null`（调用方据此回退为「报告不可解析」，**不得**当作通过）。
+ * @param {any} report
+ * @returns {number|null}
+ */
+export function extractDupPercentage(report) {
+  if (!report || typeof report !== 'object') return null;
+  const candidates = [
+    report?.statistics?.total?.percentage,
+    report?.statistics?.percentage,
+    report?.total?.percentage,
+    report?.percentage,
+  ];
+  for (const candidate of candidates) {
+    const value = typeof candidate === 'string' ? Number.parseFloat(candidate) : candidate;
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+/**
+ * 重复率判据（**F-13 第二根因修正**）：历史 `computeSubGate` 只判 `exitCode === 0`，
+ * 从不把报告里的 `percentage` 与 `--threshold` 比对。实测出现过
+ * `duplication.gatePassed = true` 而 `output` 里明列 20+ 处 `Clone found` 的组合——
+ * 只要工具因任何原因以 0 退出（版本差异、阈值标志语义变化、报告写盘但退出码未反映），
+ * 门禁即失去判别力。现改为**双判**：退出码与报告任一判失败即失败。
+ *
+ * 报告缺失或不可解析时**不放行**（`reason: 'dup-report-unreadable'`）——R16 的判别力
+ * 依赖报告，读不到报告等于没测；这与 R38「工具不可用」是不同出口，后者由退出码通道识别。
+ *
+ * @param {{ percentage: number|null, threshold: number }} params
+ * @returns {{ ok: boolean, reason: string, percentage: number|null, threshold: number }}
+ */
+export function evaluateDuplicationReport({ percentage, threshold }) {
+  if (percentage === null || percentage === undefined) {
+    return { ok: false, reason: 'dup-report-unreadable', percentage: null, threshold };
+  }
+  if (percentage >= threshold) {
+    return { ok: false, reason: 'dup-threshold-exceeded', percentage, threshold };
+  }
+  return { ok: true, reason: 'passed', percentage, threshold };
+}
 
 /** 安全静态扫描默认命令：gitleaks-secret-scanner，跨平台自动获取 gitleaks 二进制，扫描全部改动 */
 export const DEFAULT_SECURITY_COMMAND = 'npx --yes gitleaks-secret-scanner --diff-mode all';

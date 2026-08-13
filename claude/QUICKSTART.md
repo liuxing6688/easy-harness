@@ -14,28 +14,25 @@
 
 ## 🚀 快速验证
 
-### 1. 验证核心库
+### 1. 单元自测（判据函数）
 
 ```bash
-cd claude
-node test-hooks-lib.mjs
-```
-
-**预期输出**:
-```
-✓ workflow-gate-lib.mjs loaded
-✓ All core functions exported
-✓ Path adaptation successful - using .claude directory
-✓ All tests passed!
-```
-
-### 2. 运行自测 (可选)
-
-```bash
+cd easy-harness/claude
 node .claude/scripts/gate-selftest.mjs
 ```
 
-**预期结果**: `422 passed, 0 failed` (100% 通过率)
+**预期结果**: `532 passed, 0 failed`
+
+### 2. 场景回归（Hook 端到端裁决）
+
+```bash
+node .claude/scripts/gate-scenarios.mjs
+```
+
+**预期结果**: `180 passed, 0 failed`
+
+> **必须以本目录为 cwd**：判据依赖相对路径与活跃 `process.md` 解析，换目录会得到假失败。
+> 两个入口均只需 Node ≥ 18，无 `package.json` / `node_modules` 依赖。
 
 ---
 
@@ -125,7 +122,7 @@ claude
 workflow_mode: hotfix
 
 # 2. 获取用户确认
-# hooks 会要求 PM 通过 AskQuestion 确认
+# hooks 会要求 PM 通过 AskUserQuestion 确认
 
 # 3. 简化流程自动生效
 # - 豁免设计审核
@@ -183,16 +180,23 @@ node .claude/scripts/e2e-run.mjs
 
 **解决**:
 ```bash
-# 1. 检查 hooks.json 是否存在
-ls .claude/hooks/hooks.json
+# 1. 检查 Hook 注册（唯一权威源是 settings.json，不是 hooks/hooks.json）
+cat .claude/settings.json
 
-# 2. 检查 Claude Code 日志
+# 2. 在 Claude Code 内查看已注册的 Hook
+#    /hooks        —— 列出当前生效的 Hook
+#    claude --debug —— 运行期确认 Hook 是否真被触发
+
+# 3. 检查 Hook 脚本存在（生效的是 -enhanced 变体）
+ls .claude/hooks/*.mjs
+
+# 4. 检查 Claude Code 日志
 # 终端模式: 查看 stderr 输出
 # Desktop/IDE: 查看开发者工具控制台
-
-# 3. 验证 hooks 配置格式
-cat .claude/hooks/hooks.json | jq .
 ```
+
+> **注意**：`.claude/hooks/hooks.json` **不是** Claude Code 支持的 Hook 配置位置，
+> 放在那里的配置永不加载。若你的项目里有该文件，它不生效——请改 `.claude/settings.json`。
 
 ### 问题 2: 路径权限被拒
 
@@ -326,12 +330,17 @@ claude
 ### 运行自测
 
 ```bash
-# 验证所有规则
+# 验证判据函数（单元）
 node .claude/scripts/gate-selftest.mjs
 
-# 运行特定场景
-node .claude/scripts/tests/scenarios/greenfield.mjs
+# 验证 Hook 端到端裁决（场景）
+node .claude/scripts/gate-scenarios.mjs --verbose
 ```
+
+> **跑单个套件**：`node .claude/scripts/tests/selftest/r34-exec-proof.mjs` 会逐条打印
+> `ok` / `FAIL`，但**退出码恒为 0**，且跳过夹具清理与快照还原，仅适合定位具体哪条红。
+> 场景文件（`tests/scenarios/*.mjs`）只导出函数，**直接跑无任何输出**，必须走
+> `gate-scenarios.mjs`。判定一律以两个完整入口为准。
 
 ---
 
@@ -343,8 +352,9 @@ node .claude/scripts/tests/scenarios/greenfield.mjs
 - [ ] `CLAUDE.md` 已复制到项目根目录
 - [ ] `docs/process/process.md` 已初始化
 - [ ] `docs/design/gated-artifacts.json` 已配置
-- [ ] Claude Code 已检测到 hooks (启动时有提示)
-- [ ] 核心库加载测试通过 (`node test-hooks-lib.mjs`)
+- [ ] Claude Code 已检测到 hooks (`/hooks` 可列出，或启动时有提示)
+- [ ] 单元自测通过 (`node .claude/scripts/gate-selftest.mjs` → 532 passed)
+- [ ] 场景回归通过 (`node .claude/scripts/gate-scenarios.mjs` → 180 passed)
 
 ---
 

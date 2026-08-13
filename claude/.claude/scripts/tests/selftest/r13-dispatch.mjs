@@ -446,7 +446,9 @@ test('R25: 模板说明文字中的「已排查，无同构资源族」示例句
   ].join('\n');
   const r = checkIsomorphicModuleSection(designWithOnlyTemplateHint);
   assert.equal(r.ok, false);
-  assert.equal(r.reason, 'missing-isomorphic-module-table');
+  // F-11 起 extractSection 不再把标题行余下文字（`（须逐项列出）`）计入正文，故剥离引用块后
+  // 本节确实为空，理由由 missing-table 收敛为 empty-section——两者都是 deny，判据未放松。
+  assert.match(r.reason, /^(empty-isomorphic-module-section|missing-isomorphic-module-table)$/);
 });
 test('R25: hotfix 模式豁免同构模块识别机械校验', () => {
   fixtureProcess(
