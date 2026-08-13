@@ -15,7 +15,7 @@
 | `cursor/` | 适配 Cursor（自动 Hook 门禁、7 子角色、脚本/模板；含 R5 会话追踪与角色↔路径、§8.4 R21–R24、§8.5 审核加固 R28–R31、§8.6 交付可用性 R32–R33、§8.8 审核加固 R34–R38；`single-task` = **R37** 增量迭代档） | 可用 |
 | `trae/` | 适配 Trae（原生 Hook + `gate-check` 手动兜底双保险、7 Subagent、脚本/模板；同上共享门禁族 + Trae 侧 **R39** 分派计划匹配 / `gate-r13-subagent`、**R40** 闭环锁） | 可用 |
 | `codex/` | 适配 OpenAI Codex 本地客户端（ChatGPT 桌面 / CLI / IDE 扩展；7 个 custom agents + lifecycle Hooks；顶层 `read-only` sandbox 替代 Cursor 式 `conversation_id` 身份隔离；运行时状态在 `.harness/`） | 可用 |
-| `claude/` | 适配 Claude Code（v2.0 技术强制：PreToolUse / Stop / SubagentStart Hooks、7 Agents、脚本/模板；根宪章为 `CLAUDE.md`；Hook 权威源为 `.claude/settings.json`；共享门禁族与 Cursor 对等） | 可用 |
+| `claude/` | 适配 Claude Code（v2.0 技术强制：SessionStart / PreToolUse / Stop / SubagentStart Hooks、7 Agents、脚本/模板；根宪章为 `CLAUDE.md`；Hook 权威源为 `.claude/settings.json`；共享门禁族与 Cursor 对等，含 R5 会话追踪与角色↔路径、§8.4 R21–R24、§8.5 审核加固 R28–R31、§8.6 交付可用性 R32–R33、§8.8 审核加固 R34–R38；`single-task` = **R37** 增量迭代档） | 可用 |
 
 > **切勿**把外层 `easy-harness/` 当作工作区根——容器层没有 `.cursor/` / `.trae/` / `.codex/` / `.claude/` / `AGENTS.md` / `CLAUDE.md`，门禁与角色会**静默失效**。正确打开方式见下一节。
 
@@ -39,7 +39,7 @@
 - 框架**不预置** `package.json`（避免整体复制时覆盖宿主清单）。E2E 需宿主安装 `@playwright/test` + Chromium；框架自测的纯函数单测需 `vitest`。细则与安装提示见各适配 README「前置条件」。
 - Trae 适配另需 **Trae IDE ≥ v3.5.67**（Subagent 目录 + Hooks），且 **Hooks 须在 UI 中显式启用**并重载窗口/新建会话，详见 [`trae/README.md`](trae/README.md)。
 - Codex 适配另需：**将项目标为 trusted**（否则跳过项目级 `.codex/config.toml` / hooks）、首次与 Hook 变更后在 `/hooks` 中审阅并信任当前 hash；详见 [`codex/README.md`](codex/README.md)。
-- Claude Code 适配另需：Hook 配置以 **`.claude/settings.json` 为唯一权威源**（勿依赖 `.claude/hooks/hooks.json`）；命令路径占位符须用 `${CLAUDE_PROJECT_DIR}`；可用 `/hooks` 与 `claude --debug` 确认已注册。细则见 [`claude/README.md`](claude/README.md)。
+- Claude Code 适配另需：**已安装 Claude Code**（CLI / Desktop / IDE 扩展）；Hook 配置以 **`.claude/settings.json` 为唯一权威源**（勿依赖 `.claude/hooks/hooks.json`；生效的是 `gate-dev-workflow-enhanced` / `session-init-enhanced`，同名非 enhanced 文件未注册）；命令路径占位符须用 `${CLAUDE_PROJECT_DIR}`；可用 `/hooks` 与 `claude --debug` 确认已注册。细则见 [`claude/README.md`](claude/README.md)。
 - 目标项目的业务技术栈不限；具体运行时、包管理器与测试工具由系统架构师在设计阶段声明。
 
 ## 共享能力速览
@@ -54,7 +54,7 @@
 | **质量门禁** | R15 lint（跨栈探测表 ⊇ `buildManifests`；无安全默认的栈须**你本人**写 `qe.commands`）、R16 静态扫描；批次含 E2E、**R14** 接口测试、**R17** 存储对账、**R32** 生产启动冒烟、**R22** TE 替代启动负向拦截；**R34** 执行证明 / **R38** 工具不可用分类为机读判据链前置；无对外接口 / 无 UI / 无持久化等走**双要素豁免** |
 | **路径与硬化** | **R6** 代码扩展名默认门禁；**R21/R23** 角色↔路径 / `e2e/**`；**§8.5**：**R28** Shell/RunCommand 写文件、**R29** 门禁自治 deny、**R30** BOM/UTF-16 安全读盘、**R31** 回退上限；**§8.6** R32–R33；**§8.8**：**R35** 阻塞释放证据、**R36** 判定期异常 fail-closed、R34/R37/R38；TE **R24** 禁改用例掩盖缺陷（文字） |
 | **机械实现** | Hook 逻辑按域拆在 `hooks/lib/*`（含 `execproof.mjs`；`workflow-gate-lib.mjs` 为薄 barrel）；运行器含 `startup-smoke-run.mjs`、`tool-availability-lib.mjs`；自测拆为 `scripts/tests/selftest/` 与 `scripts/tests/scenarios/` |
-| **工具差异** | **Cursor**：Hook 自动拦截为主（含 `gate-subagent-track` 落盘顶层会话）。**Trae**：原生 Hook + `gate-check.mjs` 双保险，另有 `gate-r13-subagent`、**R39** 分派计划匹配、**R40** 闭环锁。**Codex**：`codex-hook-adapter` 做 wire-format 适配；顶层 `read-only` sandbox；`ask` 降级为 `deny`；运行时台账在 `.harness/`（因 `.codex/` / `.agents/` 原生只读）；Stop 允许一次 continuation。**Claude Code**：根宪章 `CLAUDE.md`；Hook 权威源 `.claude/settings.json`（PreToolUse / Stop / SubagentStart）；Agent 工具 + `AskUserQuestion`；路径占位符 `${CLAUDE_PROJECT_DIR}`；与 Cursor 对等的技术强制 |
+| **工具差异** | **Cursor**：Hook 自动拦截为主（含 `gate-subagent-track` 落盘顶层会话）。**Trae**：原生 Hook + `gate-check.mjs` 双保险，另有 `gate-r13-subagent`、**R39** 分派计划匹配、**R40** 闭环锁。**Codex**：`codex-hook-adapter` 做 wire-format 适配；顶层 `read-only` sandbox；`ask` 降级为 `deny`；运行时台账在 `.harness/`（因 `.codex/` / `.agents/` 原生只读）；Stop 允许一次 continuation。**Claude Code**：根宪章 `CLAUDE.md`；Hook 权威源 `.claude/settings.json`（SessionStart / PreToolUse matcher `Write\|Edit\|NotebookEdit`、`Bash\|PowerShell`、`Agent` / Stop / SubagentStart，共 7 个已注册脚本）；发起角色用 Agent 工具、确认用 `AskUserQuestion`；路径占位符 `${CLAUDE_PROJECT_DIR}`；与 Cursor 对等的技术强制 |
 
 编号导航与公式细节以各适配 `harness/spec/` 为准，本页不重复以免漂移。
 
