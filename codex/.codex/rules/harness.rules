@@ -1,0 +1,340 @@
+# Codex command execution policy for Harness Engineering.
+#
+# Rules only govern commands Codex considers running outside the sandbox. They
+# do not replace AGENTS.md, PreToolUse hooks, or the signed artifact gates.
+# Keep these rules conservative: a project-level `allow` would also apply to
+# the root conversation and could weaken the read-only coordinator boundary.
+
+# Project initialization and dependency changes require an approval boundary.
+prefix_rule(
+    pattern = ["npm", ["create", "install", "i", "ci", "add"]],
+    decision = "prompt",
+    justification = "Project initialization or dependency changes must follow the Harness role and toolchain workflow.",
+    match = ["npm install", "npm create vite@latest"],
+    not_match = ["npm run test"],
+)
+
+prefix_rule(
+    pattern = ["npx"],
+    decision = "prompt",
+    justification = "npx can download and execute a package; review the package and workflow authorization first.",
+    match = ["npx create-vite", "npx @playwright/test --version"],
+    not_match = ["npm exec vite"],
+)
+
+prefix_rule(
+    pattern = ["pnpm", ["create", "install", "i", "add"]],
+    decision = "prompt",
+    justification = "Project initialization or dependency changes must follow the Harness role and toolchain workflow.",
+    match = ["pnpm install", "pnpm create vite"],
+    not_match = ["pnpm test"],
+)
+
+prefix_rule(
+    pattern = ["yarn", ["create", "install", "add"]],
+    decision = "prompt",
+    justification = "Project initialization or dependency changes must follow the Harness role and toolchain workflow.",
+    match = ["yarn install", "yarn create react-app app"],
+    not_match = ["yarn test"],
+)
+
+prefix_rule(
+    pattern = ["bun", ["install", "add", "create"]],
+    decision = "prompt",
+    justification = "Project initialization or dependency changes must follow the Harness role and toolchain workflow.",
+    match = ["bun install", "bun create vite"],
+    not_match = ["bun test"],
+)
+
+prefix_rule(
+    pattern = ["cargo", ["init", "new", "add"]],
+    decision = "prompt",
+    justification = "Rust project initialization or dependency changes require the Harness development workflow.",
+    match = ["cargo new app", "cargo add serde"],
+    not_match = ["cargo test"],
+)
+
+prefix_rule(
+    pattern = ["create-tauri-app"],
+    decision = "prompt",
+    justification = "Project scaffolding must follow the Harness role and workflow gates.",
+    match = ["create-tauri-app app"],
+    not_match = ["cargo tauri build"],
+)
+
+prefix_rule(
+    pattern = ["npm", "run", "tauri"],
+    decision = "prompt",
+    justification = "Tauri initialization and project mutation must follow the Harness development workflow.",
+    match = ["npm run tauri init"],
+    not_match = ["npm run test"],
+)
+
+prefix_rule(
+    pattern = ["dotnet", "new"],
+    decision = "prompt",
+    justification = "Project scaffolding must follow the Harness role and workflow gates.",
+    match = ["dotnet new webapi"],
+    not_match = ["dotnet build"],
+)
+
+prefix_rule(
+    pattern = ["dotnet", "add", "package"],
+    decision = "prompt",
+    justification = "Dependency changes must follow the Harness role and toolchain workflow.",
+    match = ["dotnet add package Newtonsoft.Json"],
+    not_match = ["dotnet add reference src/lib.csproj"],
+)
+
+prefix_rule(
+    pattern = [["pip", "pip3"], "install"],
+    decision = "prompt",
+    justification = "Python dependency installation requires the Harness role and toolchain workflow.",
+    match = ["pip install pytest", "pip3 install ruff"],
+    not_match = ["pip list"],
+)
+
+prefix_rule(
+    pattern = ["poetry", ["init", "add", "install"]],
+    decision = "prompt",
+    justification = "Python project initialization or dependency changes require the Harness workflow.",
+    match = ["poetry install", "poetry add requests"],
+    not_match = ["poetry run pytest"],
+)
+
+prefix_rule(
+    pattern = ["uv", ["init", "add", "sync", "pip"]],
+    decision = "prompt",
+    justification = "Python project initialization or dependency changes require the Harness workflow.",
+    match = ["uv init", "uv sync"],
+    not_match = ["uv run pytest"],
+)
+
+prefix_rule(
+    pattern = ["conda", "install"],
+    decision = "prompt",
+    justification = "Environment dependency installation requires the Harness role and toolchain workflow.",
+    match = ["conda install pytest"],
+    not_match = ["conda list"],
+)
+
+prefix_rule(
+    pattern = ["django-admin", "startproject"],
+    decision = "prompt",
+    justification = "Project scaffolding must follow the Harness role and workflow gates.",
+    match = ["django-admin startproject app"],
+    not_match = ["django-admin check"],
+)
+
+prefix_rule(
+    pattern = ["go", "mod", "init"],
+    decision = "prompt",
+    justification = "Go project initialization must follow the Harness development workflow.",
+    match = ["go mod init example.com/app"],
+    not_match = ["go mod tidy"],
+)
+
+prefix_rule(
+    pattern = ["go", "get"],
+    decision = "prompt",
+    justification = "Dependency changes must follow the Harness role and toolchain workflow.",
+    match = ["go get example.com/lib"],
+    not_match = ["go version"],
+)
+
+prefix_rule(
+    pattern = ["mvn", "archetype:generate"],
+    decision = "prompt",
+    justification = "Project scaffolding must follow the Harness role and workflow gates.",
+    match = ["mvn archetype:generate -DgroupId=com.example"],
+    not_match = ["mvn test"],
+)
+
+prefix_rule(
+    pattern = ["gradle", "init"],
+    decision = "prompt",
+    justification = "Project scaffolding must follow the Harness role and workflow gates.",
+    match = ["gradle init"],
+    not_match = ["gradle test"],
+)
+
+prefix_rule(
+    pattern = ["rails", "new"],
+    decision = "prompt",
+    justification = "Project scaffolding must follow the Harness role and workflow gates.",
+    match = ["rails new app"],
+    not_match = ["rails test"],
+)
+
+prefix_rule(
+    pattern = ["flutter", "create"],
+    decision = "prompt",
+    justification = "Project scaffolding must follow the Harness role and workflow gates.",
+    match = ["flutter create app"],
+    not_match = ["flutter test"],
+)
+
+prefix_rule(
+    pattern = ["flutter", "pub", ["get", "add"]],
+    decision = "prompt",
+    justification = "Dependency changes must follow the Harness role and toolchain workflow.",
+    match = ["flutter pub get", "flutter pub add http"],
+    not_match = ["flutter pub deps"],
+)
+
+prefix_rule(
+    pattern = ["dart", "pub", ["get", "add"]],
+    decision = "prompt",
+    justification = "Dependency changes must follow the Harness role and toolchain workflow.",
+    match = ["dart pub get", "dart pub add http"],
+    not_match = ["dart pub deps"],
+)
+
+prefix_rule(
+    pattern = ["composer", ["create-project", "install", "require"]],
+    decision = "prompt",
+    justification = "PHP project initialization or dependency changes require the Harness workflow.",
+    match = ["composer install", "composer require monolog/monolog"],
+    not_match = ["composer show"],
+)
+
+prefix_rule(
+    pattern = ["gem", "install"],
+    decision = "prompt",
+    justification = "Ruby dependency installation requires the Harness role and toolchain workflow.",
+    match = ["gem install bundler"],
+    not_match = ["gem list"],
+)
+
+prefix_rule(
+    pattern = ["bundle", ["init", "install"]],
+    decision = "prompt",
+    justification = "Ruby project initialization or dependency changes require the Harness workflow.",
+    match = ["bundle install", "bundle init"],
+    not_match = ["bundle exec rake"],
+)
+
+# System-level toolchain installation requires explicit user approval.
+prefix_rule(
+    pattern = [["winget", "choco", "scoop", "brew", "yum", "dnf", "zypper"], "install"],
+    decision = "prompt",
+    justification = "System-level toolchain installation must be explicitly reviewed and approved by the user.",
+    match = ["winget install OpenJS.NodeJS", "brew install node"],
+    not_match = ["brew list"],
+)
+
+prefix_rule(
+    pattern = [["apt", "apt-get"], "install"],
+    decision = "prompt",
+    justification = "System-level toolchain installation must be explicitly reviewed and approved by the user.",
+    match = ["apt install nodejs", "apt-get install git"],
+    not_match = ["apt update"],
+)
+
+prefix_rule(
+    pattern = ["pacman", "-S"],
+    decision = "prompt",
+    justification = "System-level toolchain installation must be explicitly reviewed and approved by the user.",
+    match = ["pacman -S nodejs"],
+    not_match = ["pacman -Q"],
+)
+
+prefix_rule(
+    pattern = ["nix", "install"],
+    decision = "prompt",
+    justification = "System-level toolchain installation must be explicitly reviewed and approved by the user.",
+    match = ["nix install nixpkgs#nodejs"],
+    not_match = ["nix search nixpkgs nodejs"],
+)
+
+prefix_rule(
+    pattern = ["nix", "profile", "install"],
+    decision = "prompt",
+    justification = "System-level toolchain installation must be explicitly reviewed and approved by the user.",
+    match = ["nix profile install nixpkgs#nodejs"],
+    not_match = ["nix profile list"],
+)
+
+prefix_rule(
+    pattern = ["nix-env", ["-i", "-iA"]],
+    decision = "prompt",
+    justification = "System-level toolchain installation must be explicitly reviewed and approved by the user.",
+    match = ["nix-env -iA nixpkgs.nodejs"],
+    not_match = ["nix-env -q"],
+)
+
+prefix_rule(
+    pattern = ["asdf", "install"],
+    decision = "prompt",
+    justification = "System-level toolchain installation must be explicitly reviewed and approved by the user.",
+    match = ["asdf install nodejs 22.0.0"],
+    not_match = ["asdf list"],
+)
+
+prefix_rule(
+    pattern = ["mise", ["install", "use"]],
+    decision = "prompt",
+    justification = "System-level toolchain installation must be explicitly reviewed and approved by the user.",
+    match = ["mise install node@22", "mise use node@22"],
+    not_match = ["mise list"],
+)
+
+prefix_rule(
+    pattern = [["rustup-init", "rustup-init.exe", "vs_buildtools", "vs_buildtools.exe"]],
+    decision = "prompt",
+    justification = "System-level toolchain installation must be explicitly reviewed and approved by the user.",
+    match = ["rustup-init", "vs_buildtools.exe --quiet"],
+    not_match = ["rustup show"],
+)
+
+# These commands can rewrite an arbitrary working tree and cannot be reduced
+# to the path-aware R28 decision made by the PreToolUse hook.
+prefix_rule(
+    pattern = ["git", "apply"],
+    decision = "prompt",
+    justification = "git apply can rewrite arbitrary paths; confirm the patch before allowing it.",
+    match = ["git apply change.patch"],
+    not_match = ["git diff --check"],
+)
+
+prefix_rule(
+    pattern = ["git", "reset", "--hard"],
+    decision = "prompt",
+    justification = "git reset --hard can discard working-tree changes; confirm the target and recovery plan.",
+    match = ["git reset --hard HEAD~1"],
+    not_match = ["git reset HEAD file.txt"],
+)
+
+prefix_rule(
+    pattern = ["git", "stash", ["pop", "apply"]],
+    decision = "prompt",
+    justification = "Applying a stash can overwrite working-tree changes; confirm before allowing it.",
+    match = ["git stash pop", "git stash apply stash@{0}"],
+    not_match = ["git stash list"],
+)
+
+prefix_rule(
+    pattern = ["git", "clean"],
+    decision = "prompt",
+    justification = "git clean can permanently delete untracked files; confirm the exact cleanup scope.",
+    match = ["git clean -fd"],
+    not_match = ["git status --short"],
+)
+
+# Network commands that may download or execute external content require an
+# approval boundary when they escape the sandbox.
+prefix_rule(
+    pattern = [["curl", "wget", "Invoke-WebRequest", "iwr"]],
+    decision = "prompt",
+    justification = "Review external network access and any downloaded content before allowing the command.",
+    match = ["curl https://example.com/file", "wget https://example.com/file"],
+    not_match = ["git status"],
+)
+
+prefix_rule(
+    pattern = ["git", "clone"],
+    decision = "prompt",
+    justification = "Review the external repository and destination before allowing a clone outside the sandbox.",
+    match = ["git clone https://example.com/repo.git"],
+    not_match = ["git log --oneline"],
+)

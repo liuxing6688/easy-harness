@@ -10,7 +10,7 @@ disable-model-invocation: true
 
 > **手动调用**：本 skill 仅在开发者显式发起复盘时使用，不随日常开发自动加载。
 >
-> **规约权威源**：`AGENTS.md`（常驻 charter §1–§8）、`.codex/harness/spec/`（说明权威细则）、`README.md`（自测与配置）、`.codex/hooks/**`、`.codex/agents/**`、`.codex/templates/**`。
+> **规约权威源**：`AGENTS.md`（常驻 charter §1–§8）、`.codex/harness/spec/`（说明权威细则）、`README.md`（自测与配置）、`.codex/rules/*.rules`、`.codex/hooks/**`、`.codex/agents/**`、`.codex/templates/**`。
 >
 > **元规则 R12**：规约改动**只可加强、不可放松**；放宽约束须拒绝并说明替代方案（如拆分迭代、补机械门禁而非删文档）。
 
@@ -38,7 +38,7 @@ disable-model-invocation: true
 | 流程状态 | 活跃 `process.md`（frontmatter + 各 `##` 节） |
 | 需求/设计 | `docs/**/requirement/*.md`、`docs/**/design/*.md`、`gated-artifacts.json` |
 | 质量/测试 | `docs/**/quality/*.md`、`docs/**/test/*.md`、`test-results/e2e/.e2e-*.json` |
-| 规约 | `AGENTS.md`、`README.md`、`.codex/agents/*.toml`、`.codex/hooks/**` |
+| 规约 | `AGENTS.md`、`README.md`、`.codex/rules/*.rules`、`.codex/agents/*.toml`、`.codex/hooks/**` |
 
 ### 1.2 合规判定维度（摘要）
 
@@ -47,7 +47,7 @@ disable-model-invocation: true
 - **开发编排**：分派计划、待派发列表、进度列表（B1 最新状态）、回退计数是否一致。
 - **测试闭环**：批次/最终集成测试与 E2E（`mechanical-gates.md` §8.3）；`hotfix` 是否按 R11 折叠；`gatePassed` 是否达标。
 - **顶层代理边界**：是否存在代写源码/设计、越级 Task、Hook 绕过等（`AGENTS.md` §5，结合 git 历史或对话记录若可获）。
-- **机械门禁对齐**：文档声明与 `workflow-gate-lib.mjs` / Hook 行为是否一致（R13、TG-D-4）。
+- **机械门禁对齐**：文档声明与 `.codex/rules/*.rules` / `workflow-gate-lib.mjs` / Hook 行为是否一致（R13、R29、TG-D-4）。
 
 ### 1.3 输出：复盘报告
 
@@ -96,7 +96,7 @@ disable-model-invocation: true
 | 字段 | 要求 |
 | ---- | ---- |
 | 问题陈述 | 规约哪一节/哪条规则在项目中暴露不足 |
-| 改进方案 | 具体改哪些文件（`AGENTS.md` / `.codex/harness/spec/` / agent / hook / 模板 / README） |
+| 改进方案 | 具体改哪些文件（`AGENTS.md` / `.codex/rules/` / `.codex/harness/spec/` / agent / hook / 模板 / README） |
 | R12 判定 | `加强` / `澄清（不弱化）` / `需机械门禁补齐`；**禁止**「删除约束」「降低 gatePassed 标准」类方案 |
 | 优先级 | P0（阻塞后续项目）/ P1（显著降摩擦）/ P2（文档/体验） |
 | 验证方式 | 将跑哪些自测（见 Phase 3） |
@@ -122,7 +122,7 @@ disable-model-invocation: true
 
 ### 3.1 实施顺序
 
-1. 先改**机械层**（`workflow-gate-lib.mjs`、各 `gate-*.mjs`、`e2e-run-lib.mjs`）再改**文档层**（`AGENTS.md`、`.codex/harness/spec/`、`README.md`、agents、templates），保持 TG-D-4 / R13 表述一致。
+1. 先改**机械层**（`.codex/rules/*.rules`、`workflow-gate-lib.mjs`、各 `gate-*.mjs`、`e2e-run-lib.mjs`）再改**文档层**（`AGENTS.md`、`.codex/harness/spec/`、`README.md`、agents、templates），保持 TG-D-4 / R13 / R29 表述一致。
 2. 同步更新受影响的 agent 文件中的交叉引用。
 3. 在复盘报告中记录「变更清单」：文件路径 + 一行变更说明。
 
@@ -139,6 +139,10 @@ node .codex/scripts/gate-scenarios.mjs
 
 ```bash
 npx vitest run --config .codex/scripts/vitest.config.ts
+
+# Rules 语法、内联样例与代表性命中
+codex execpolicy check --pretty --rules .codex/rules/harness.rules -- npm install
+codex execpolicy check --pretty --rules .codex/rules/harness.rules -- npm run test
 ```
 
 失败时：修复实现或回滚该条改进，**不得**为通过测试而弱化门禁（R12）。
@@ -169,7 +173,7 @@ npx vitest run --config .codex/scripts/vitest.config.ts
 
 - **不跳过审核**：Phase 2 → Phase 3 之间必须有用户明确批准。
 - **复盘不代替交付**：复盘 skill 不宣告「项目已完成」；完成判定仍以 `process.md` 测试闭环为准。
-- **治理改动归属**：修改 `.codex/scripts|agents|hooks/**` 时，若当前项目仍有活跃开发流程，应提醒用户此类改动属 `governance-overhaul`；本 skill 在复盘场景下由开发者手动触发，可直接实施已批准项。
+- **治理改动归属**：修改 `.codex/rules/**` 或 `.codex/scripts|agents|hooks/**` 时，若当前项目仍有活跃开发流程，应提醒用户此类改动属 `governance-overhaul`；本 skill 在复盘场景下由开发者手动触发，可直接实施已批准项。
 - **证据优先**：合规结论必须可追溯到文件内容，禁止无证据的笼统评价。
 
 ## 附加资源

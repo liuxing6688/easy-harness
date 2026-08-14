@@ -1,13 +1,16 @@
 # 流程门禁 Hook 与机械判据（说明权威）
 
 > **执行权威**：`.codex/hooks/**`、`.codex/scripts/*-run.mjs`、`workflow-gate-lib.mjs`（客观判据以代码为准）。  
+> **沙箱外命令策略**：`.codex/rules/harness.rules`（Codex 原生 `prefix_rule`；仅处理沙箱外命令，不取代本章判据）。  
 > **角色操作摘要**：QE → `quality-engineer.toml`（R15/R16）；TE → `test-engineer.toml`（R14/R17/E2E）；SA → `system-architect.toml`（双要素豁免声明）。  
 > **常驻摘要**：根目录 `AGENTS.md`（禁止绕过 Hook、门禁链表、顶层自检）。  
 > 本节承接原 AGENTS.md §8；修改行为须同步升级 Hook/脚本（R12），不得仅改本文放宽判据。
 
 ## 8. 流程门禁 Hook（机械约束）
 
-本项目通过 Codex Hook 对高风险操作做**确定性拦截**，与 `AGENTS.md` §5 文字规则互补。门禁路径与 Shell 模式以 `harness.config.json` 为默认，并与当前活跃 `docs/**/design/gated-artifacts.json`（可选，架构师维护）合并。活跃路径由 `.harness/harness-state.json` 或 `HARNESS_PROCESS_PATH` 决定。
+本项目通过 Codex Hook 对高风险操作做**确定性拦截**，与 `AGENTS.md` §5 文字规则互补；`.codex/rules/harness.rules` 另在沙箱逃逸边界按固定命令前缀要求批准。门禁路径与 Shell 模式以 `harness.config.json` 为默认，并与当前活跃 `docs/**/design/gated-artifacts.json`（可选，架构师维护）合并。活跃路径由 `.harness/harness-state.json` 或 `HARNESS_PROCESS_PATH` 决定。
+
+Rules 与 Hook 是叠加关系：Rules 的 `prompt` 不能覆盖 Hook 的 `deny`，沙箱内命令也不会进入 Rules 裁决。因此角色、路径、阶段、成果物内容与签名仍必须由 Hook/运行器判断；Rules 只是沙箱外批准层和 Hook 缺失时的命令前缀后备线。
 
 > **Codex 协议层**：`hooks.json` 使用官方事件名 `PreToolUse` / `SubagentStart` / `Stop`。`codex-hook-adapter.mjs` 将 Codex wire format 转为下列既有门禁内核的输入输出；本章中的 `permission` / `followup_message` 是内核判据名，不是直接返回给 Codex 的协议。最终返回形态为 `permissionDecision:"deny"`、`decision:"block"` 或空对象。
 
@@ -19,7 +22,8 @@
 | ---- | -------- | -------- | -------- |
 | `gate-dev-workflow` | `PreToolUse`（`apply_patch` / `Edit` / `Write`） | 适配器把 patch 的 `tool_input.command` 映射为可解析 patch；随后执行源码、docs 角色成果物、R6、R10 与 R29 判据 | 判定顺序：R10 → R29 → R5 角色↔路径 → 源码分派/R3/R9/阻塞 → 放行 |
 | `gate-dev-shell` | `PreToolUse`（`Bash`） | `gatedShellPatterns`、R22 替代 E2E 启动、R28 Shell 写入与 R34 执行证明签发 | 判定同既有 shell 内核；旧 `ask` 输出由适配器保守转为 deny |
-| `gate-toolchain-install` | 不直接注册 | Codex 原生 sandbox、网络隔离与 `approval_policy=on-request` 负责安装批准；脚本保留作判据回归与手工审计 | 不依赖 PreToolUse 不支持的 `ask` |
+| `gate-toolchain-install` | `PreToolUse`（`Bash`，由 shell 适配链先执行） | 系统工具链安装须有绑定命令哈希的用户凭证；Rules 对同类沙箱外命令再加 `prompt` | 有有效凭证则进入后续 Shell 判据；否则旧 `ask` 由适配器保守转为 deny，Rules 不覆盖该拒绝 |
+| Codex Rules（非 Hook） | Codex 准备在沙箱外执行命令时 | 项目初始化/依赖变更、系统工具链安装、网络访问、Git 工作树改写的固定前缀 | `.codex/rules/harness.rules` 命中后 `prompt`；多条 Rules 命中取最严格结果 |
 | `gate-role-sequence`（**R13**） | `PreToolUse`（`Agent` / `spawn_agent`） | 发起 custom agent 前校验 R10/R19/R20/R33/R18/R15/R16 等，并记录最近派发角色 | 前置满足或非门禁起点角色；解析/运行异常按原 fail-open 策略 |
 | `gate-subagent-track`（兼容记录） | `SubagentStart` | 记录父 `session_id` 供旧身份健康检查不刷告警；不用于区分顶层/子 agent | 恒放行 |
 | `gate-stop-workflow` | `Stop` | 内核产出 `followup_message`，适配器转为 `decision:block`；`stop_hook_active=true` 时返回 `continue:false` 防递归 | 完成/取消/有据阻塞时放行，否则自动 continuation 一次 |
@@ -162,6 +166,7 @@ Hook 脚本路径：`.codex/hooks/`。修改 Hook 行为时须同步更新本节
 - **批次 + 最终 E2E**（`batchE2ePassed` / `finalE2ePassed`）；**R15 lint**；**R16 静态扫描**；**R14 接口测试报告**；**R17 存储对账**（含适用行 `test-results/recon/*.json` 证据文件）；**R32 生产启动冒烟**（含强杀后重启段与结果新鲜度，§8.6）；**R33 界面与交互期望确认行**（§8.6）；**R18 设计审核**（含摘录最短长度、设计原文存在性、**设计落点 §N 章节窗口**、跨行去重）。**目标达成性 / 验收标准与摘录的深层语义对齐 / 对账查验语义 / 界面期望是否被忠实落地 / SRP 等**仍不可机械判定，由 RR/QE/PM 文字审查兜底。R18 设计落点/任务包交叉校验仍为弱匹配；摘录「是否与验收标准语义相关」仍靠人工核验——机读只证明文字真实、定位正确、不过度雷同。
 - **`test-results/` 受控运行产物例外**：E2E / lint / 静态扫描 / QE 留痕 / **R17 对账证据（`test-results/recon/*.json`）** / **R32 启动冒烟结果（`test-results/e2e/.startup-smoke-result.json`）** / Playwright trace 等由运行器或测试工程师进程内写盘，**不触发** `gate-dev-workflow`；`.gitignore` 已忽略 `test-results/`。
 - Shell 门禁为正则匹配，属「尽力而为」：可绕过手段无法穷尽拦截。**R28** 已把「写文件类命令」纳入与 Write 同等判据（见 §8.5），但仍不可穷尽；子 agent 不得主动利用（`AGENTS.md` §5.16）。
+- Codex Rules 只做参数列表的精确前缀匹配且仅作用于沙箱外执行；安全的 `bash`/`sh`/`zsh` 线性命令链可被拆分逐项裁决，含重定向、变量、替换、通配符或控制流时按整个 Shell 包装调用裁决，PowerShell 包装不保证拆分。故 Rules 不声称补齐 Shell 正则或 Hook 的全部边界。
 - **hotfix 折叠通道下 R14/R17 无硬门禁的部分缓解**：见 `gate-chain.md` R9 脚注第 4 条（非阻塞软性提醒）。
 
 ### 8.5 审核加固项（R28–R31 与 R5/R6 加强）
@@ -184,7 +189,7 @@ Hook 脚本路径：`.codex/hooks/`。修改 Hook 行为时须同步更新本节
 | `targets` 非空 | 命令写入的目标可静态解析且命中受门禁路径 | 套用与 Write **完全相同**的判据：R5 顶层身份 → R5 角色↔路径 → （非 `e2e/**`）分派计划/R3/R9/阻塞 |
 | `selfGoverned` 非空 | 目标为门禁自治资产 | 按 R29 分级（`deny` / `ask`） |
 | `opaqueWrite` | 内联解释器（`node -e`/`python -c`…）含写文件语义但目标不可解析 | `deny`，要求改用 Write 类工具以便门禁裁决 |
-| `opaqueWorktree` | `git apply` / `reset --hard` / `stash pop` 等可任意改写工作树 | legacy 内核输出 `ask`；Codex `PreToolUse` 有效裁决为 `deny`，须转由用户决定 |
+| `opaqueWorktree` | `git apply` / `reset --hard` / `stash pop` 等可任意改写工作树 | legacy 内核输出 `ask`；Codex `PreToolUse` 有效裁决为 `deny`，须转由用户决定；Rules 的同前缀 `prompt` 只作沙箱外后备，不能覆盖 Hook 拒绝 |
 | 其余 | 只读 / 构建 / 框架运行器 / 写非门禁路径 | 沿用既有逻辑 |
 
 **能力边界**：仍是正则「尽力而为」，目标是把随手绕过的成本从 0 提高到「必须刻意构造」，
@@ -200,11 +205,13 @@ Hook 脚本路径：`.codex/hooks/`。修改 Hook 行为时须同步更新本节
 安装命令**；把 `qe.commands.lint` 设为 `exit 0` 即令 R15 空转（`gatePassed=true`）；
 清空 `sourceDirs` 即令 R6 全面失效。这使 R12「只可加强」失去机械基础。
 
+Codex Rules 层加入后，`.codex/rules/*.rules` 同样属于门禁强度配置：删除 `prompt`、改为 `allow` 或缩短前缀都可直接削弱沙箱外批准边界，因此按同一 `gate-config` 裁决保护。
+
 | 分级 | 路径 | 裁决 | 理由与解法 |
 | ---- | ---- | ---- | ---- |
 | `runtime-marker` | `.harness/.root-conversation-id.json`、`.harness/.dispatched-roles.json` | **deny** | 只应由 Hook 进程自身落盘；代理写入即等于自签身份。解法：走正常 Task 派发让 Hook 自行落盘 |
 | `approval-marker` | `.codex/toolchain-install-approved.json` | **deny** | 代表旧内核的用户批准凭证，代理写入即自签授权。Codex 常态安装批准改用原生 sandbox / approval；如需该兼容凭证只能由用户本人创建 |
-| `gate-config` | `.codex/hooks.json`、`.codex/harness.config.json`、`AGENTS.md`、`.codex/harness/spec/**.md` | **deny** | 门禁强度旋钮与权威文本；「是否放宽门禁」不能由被约束方自行决定。解法：代理呈现 diff/理由，由**用户本人**编辑 |
+| `gate-config` | `.codex/hooks.json`、`.codex/harness.config.json`、`.codex/rules/*.rules`、`AGENTS.md`、`.codex/harness/spec/**.md` | **deny** | 命令策略、门禁强度旋钮与权威文本；「是否放宽门禁」不能由被约束方自行决定。解法：代理呈现 diff/理由，由**用户本人**编辑 |
 | 角色门禁 | `.harness/harness-state.json` | 期望 `project-manager` | 它决定所有门禁读哪一份 `process.md`；保留 PM bootstrap 窗口 |
 | 角色门禁 | `docs/[{feature}/]design/gated-artifacts.json` | 期望 `system-architect` | **2026-07-29 审核补齐**：它是 `harness.config.json` 的 merge 另一半（`extra*` 收紧项、各 `{gate}Applicability` 豁免第一要素、`productionStartupCommand`）。历史实现把它整体排除在门禁外（`isGatedDevPath` 直接 return false 且不在角色成果物判据内），等于**任何角色、任何阶段都能改写门禁强度**——R29 锁死了 `harness.config.json` 却放开了它。现纳入角色门禁（`isGatedArtifactsConfigPath`），Write 与 Shell（R28 `targets`）两通道同判；仍不走 DE 分派计划/R3/R9，避免 SA 在开发前产出它时死锁 |
 

@@ -228,6 +228,8 @@ Phase 1 对照本清单逐项打勾并记录证据。结论：`✓` 合规 / `�
 
 | F10 | **R38 工具不可用**：产物曾标 `toolUnavailable` 时，处置路径是「PM 标 blocking + AskQuestion 请用户决策」，**不是**回派 DE 整改不存在的缺陷、也不是编造违规项来「解释」失败 | R38 |
 
+| F11 | **Codex Rules**：项目受信任且 `.codex/rules/harness.rules` 可由 `codex execpolicy check` 加载；项目规则只使用 `prompt`，未用 `allow` 削弱根 `read-only`；代表性安装/下载/工作树命令命中，普通只读命令不命中 | `README.md`「Codex Rules 层」、R29 |
+
 
 
 ## G. 文档与规约一致性

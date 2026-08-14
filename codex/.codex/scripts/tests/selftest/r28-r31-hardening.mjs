@@ -186,8 +186,12 @@ test('R29: 工具链授权凭证归类为 approval-marker（deny）', () => {
   assert.equal(harnessSelfGovernedVerdict('approval-marker', p).permission, 'deny');
 });
 
-test('R29: Hook 注册表与门禁配置归类为 gate-config（deny）', () => {
-  for (const p of ['.codex/hooks.json', '.codex/harness.config.json']) {
+test('R29: Hook 注册表、门禁配置与 Codex Rules 归类为 gate-config（deny）', () => {
+  for (const p of [
+    '.codex/hooks.json',
+    '.codex/harness.config.json',
+    '.codex/rules/harness.rules',
+  ]) {
     assert.equal(classifyHarnessSelfGovernedPath(p), 'gate-config');
     assert.equal(harnessSelfGovernedVerdict('gate-config', p).permission, 'deny');
   }
@@ -328,6 +332,8 @@ test('R28: 自治资产目标经 Shell 写入时按 R29 分级（而非普通路
   assert.equal(forge.selfGoverned.some((s) => s.kind === 'runtime-marker'), true);
   const cfg = classifyShellWriteIntent('echo {} > .codex/harness.config.json');
   assert.equal(cfg.selfGoverned.some((s) => s.kind === 'gate-config'), true);
+  const rules = classifyShellWriteIntent('Set-Content .codex/rules/harness.rules ""');
+  assert.equal(rules.selfGoverned.some((s) => s.kind === 'gate-config'), true);
 });
 
 test('R28: 只读 / 构建 / 框架运行器命令不被判为写文件（防误伤）', () => {

@@ -2,7 +2,7 @@
 
 适配 OpenAI Codex 本地客户端（ChatGPT 桌面应用中的 Codex、Codex CLI、Codex IDE 扩展）的跨技术栈 AI 编程流程规约。将本目录作为 Codex workspace 根，或整体复制到目标项目后使用。
 
-规约采用**分层权威**（薄宪章常驻 + Hook 机械强制 + 角色执行面 + `harness/spec` 说明细则）。
+规约采用**分层权威**（薄宪章常驻 + Rules 沙箱外命令策略 + Hook 机械强制 + 角色执行面 + `harness/spec` 说明细则）。
 
 **建议阅读顺序**：
 
@@ -11,7 +11,7 @@
 3. **接入与调参**：目录结构 → 配置说明
 4. **改规约 / 维护**：规约权威分层 → 框架自测 → 能力边界
 
-本适配以 2026-08-03 的官方文档为准：[AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md) · [Config](https://learn.chatgpt.com/docs/config-file/config-basic) · [Hooks](https://learn.chatgpt.com/docs/hooks) · [Subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents) · [Skills](https://learn.chatgpt.com/docs/build-skills) · [Sandbox](https://learn.chatgpt.com/docs/agent-approvals-security)
+本适配以 2026-08-14 的官方文档为准：[AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md) · [Rules](https://learn.chatgpt.com/docs/agent-configuration/rules) · [Config](https://learn.chatgpt.com/docs/config-file/config-basic) · [Hooks](https://learn.chatgpt.com/docs/hooks) · [Subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents) · [Skills](https://learn.chatgpt.com/docs/build-skills) · [Sandbox](https://learn.chatgpt.com/docs/agent-approvals-security)
 
 ## 前置条件
 
@@ -76,15 +76,17 @@
 | Cursor 规约能力 | Codex 实现 |
 | --------------- | ---------- |
 | 根规则常驻 | 根 `AGENTS.md`，Codex 启动时按目录链加载 |
+| `.mdc` 按 glob 提醒 | Codex 无同构提示词机制；两条路径规则以条件化条款常驻 `AGENTS.md` §8 |
 | 角色 agent | `.codex/agents/*.toml` custom agents（`developer_instructions`） |
 | 项目设置 | 受信任项目的 `.codex/config.toml` |
+| 沙箱外命令策略 | `.codex/rules/harness.rules` 的原生 `prefix_rule` |
 | 写入门禁 | `PreToolUse` 匹配 `apply_patch` / `Edit` / `Write`，适配器解析 patch 路径 |
 | Shell 门禁 | `PreToolUse` 匹配 `Bash`，依次跑工具链安装门禁与开发 Shell 门禁 |
 | 角色顺序门禁 | `PreToolUse` 匹配 `Agent` / `spawn_agent` |
 | 子 agent 启动记录 | `SubagentStart` |
 | 未闭环自动继续 | `Stop` 返回 `decision: block`；已处于 continuation 时停止递归 |
 | 按需复盘 | `.agents/skills/project-retrospective/`，用 `$project-retrospective` 显式调用 |
-| 用户批准 | Codex 原生 sandbox + `approval_policy = "on-request"` |
+| 用户批准 | Codex Rules + 原生 sandbox + `approval_policy = "on-request"` |
 
 > **注意**：`PreToolUse` 当前不支持 `permissionDecision: "ask"`。旧门禁内核出现 `ask` 时，适配器保守转为 `deny`——须先在对话中问你，再由你执行命令或走 Codex 原生批准。工具链安装不会因重复调用而自动放行。
 
@@ -101,6 +103,7 @@ codex/                        # 适配 Codex 的完整规约根——作为 work
 │   ├── config.toml           # 顶层 read-only、hooks、多 agent 开关
 │   ├── hooks.json
 │   ├── harness.config.json
+│   ├── rules/harness.rules   # 沙箱外命令前缀策略（受信任项目启动时加载）
 │   ├── agents/*.toml         # 7 个角色
 │   ├── hooks/
 │   │   ├── codex-hook-adapter.mjs / codex-adapter-lib.mjs
@@ -127,15 +130,38 @@ Codex 原生把可写根中的 `.codex/` 与 `.agents/` 递归保护为只读。
   - 未声明时：`qe-run.mjs` / `lint-run.mjs` 共用 `lint-run-lib.mjs` 探测表（覆盖面须 ⊇ `gatedPaths.buildManifests`）
   - 需要覆盖时：monorepo、探测不准，或无安全默认 lint 的栈（Maven/Gradle/PHP/CMake/Make）——**由你本人编辑**；代理只能呈现 `test-results/qe/.lint-result.json` 的 `remediation.configSnippet`
 - **根 sandbox / hooks / 多 agent**：`.codex/config.toml`
+- **沙箱外命令批准策略**：`.codex/rules/harness.rules`
 - **模型 / 推理强度 / 角色 sandbox**：`.codex/agents/*.toml`
 
 `.codex/**`、`.agents/**`、`AGENTS.md` 与 `harness/spec/**` 是治理资产。Codex 原生保护前两者；Hook 继续拒绝代理改写治理资产及 `.harness/` 中的授权/证明台账。
+
+### Codex Rules 层
+
+Codex 会在启动时扫描每个活跃配置层的 `rules/*.rules`；项目级 `.codex/rules/` 只有在项目受信任时加载，修改后须重启 Codex。Rules 目前是实验能力，文件使用无副作用的 Starlark。
+
+在 TUI 把命令加入 allow list 时，Codex 写入的是用户层 `~/.codex/rules/default.rules`，不是本项目文件；Smart approvals 也可能在提权时建议规则前缀，接受前须核对范围。团队/用户/项目层规则共同生效，管理员还可通过 `requirements.toml` 强制更严格的前缀策略。
+
+`prefix_rule` 按**命令参数的精确前缀**匹配，`pattern` 的单个位置可写字面量并集；`decision` 为 `allow`、`prompt` 或 `forbidden`。多条命中时取最严格结果：`forbidden > prompt > allow`。`justification` 用于批准/拒绝说明，`match` 与 `not_match` 是加载时执行的内联样例。
+
+本规约的 Rules 层只使用 `prompt`，为四类已有命令约束提供沙箱外批准与后备防线：项目初始化/依赖变更、系统工具链安装、外部网络下载、无法静态归属路径的 Git 工作树改写。Hook 的 `deny` 仍优先生效，Rules 不会把拒绝改成可批准。**不配置项目级 `allow`**，因为规则无法区分顶层协调会话与业务角色；自动放行会削弱根 `read-only` 的 R5 隔离。
+
+Rules 只在 Codex 请求命令**逃逸沙箱**时裁决，不能表达文件 glob、调用角色、工作流阶段、文档内容、用户确认真伪或 `execProof`。因此下列能力仍分别由 `AGENTS.md` 与 Hook/运行器承担：
+
+| 能力 | 权威层 |
+| ---- | ------ |
+| Cursor 两条 `.mdc` 路径提醒 | `AGENTS.md` §8 的路径条件条款 |
+| R5/R21/R23 角色与路径、R28 可解析写入、R29 治理资产 | `PreToolUse` Hook |
+| R13 阶段顺序、R14–R18/R32/R34/R38 产物与质量判据 | Hook / `*-run.mjs` |
+| R20/R26/R27/R33/R35 的真实用户问答 | 角色约束 + 顶层自检 |
+
+对 `bash -lc`、`bash -c` 及 `sh`/`zsh` 同类包装，Codex 仅在脚本由普通参数和 `&&`、`||`、`;`、`|` 组成时安全拆分并逐命令裁决；一旦包含重定向、变量、替换、通配符或控制流，规则只看到整个 Shell 包装调用。PowerShell 包装也不保证拆分。因此 Rules 是沙箱外批准层，不替代 R28 的路径解析与 Hook 拒绝。
 
 ## 规约权威分层
 
 | 层 | 路径 | 作用 |
 | -- | ---- | ---- |
 | 常驻宪章 | `AGENTS.md` | 顶层禁令、模式摘要、门禁链摘要、自检与权威索引 |
+| 沙箱外命令策略 | `.codex/rules/*.rules` | 命令前缀的批准、禁止或放行策略；当前仅使用 `prompt` |
 | 角色执行面 | `.codex/agents/*.toml` | 7 个角色的职责、输入、输出和内部流程 |
 | 机械执行 | `.codex/hooks/**`、`.codex/scripts/*-run.mjs` | 路径、阶段、质量与测试判据 |
 | 说明权威 | `.codex/harness/spec/**` | 公式、例外、编号与能力边界 |
@@ -157,13 +183,17 @@ node .codex/scripts/gate-scenarios.mjs
 
 # 纯函数单测（需宿主安装 vitest）
 npx vitest run --config .codex/scripts/vitest.config.ts
+
+# Rules 语法、内联样例与命中结果（预期分别为 prompt / 无 decision 字段）
+codex execpolicy check --pretty --rules .codex/rules/harness.rules -- npm install
+codex execpolicy check --pretty --rules .codex/rules/harness.rules -- npm run test
 ```
 
 ## 能力边界
 
 以下部分无法与 Cursor 一比一映射，适配采用等效或更保守策略：
 
-1. **无 `.mdc` 按 glob 提醒**：关键约束常驻 `AGENTS.md`；路径相关拒绝由 `PreToolUse` Hook 注入。
+1. **Rules 不等于 `.mdc`**：Codex Rules 只裁决沙箱外命令，不能按 glob 注入提示词；原两条 `.mdc` 已按路径条件迁入 `AGENTS.md` §8，路径相关拒绝继续由 `PreToolUse` Hook 执行。
 2. **无稳定的「当前 subagent id」**：不能照搬 Cursor 的 `conversation_id` 顶层识别；改用根 `read-only` + 角色 `workspace-write`，角色↔路径仍由 Hook 执行。
 3. **CLI / 用户配置可覆盖项目 sandbox**：`--sandbox workspace-write`、`danger-full-access`、`--yolo` 会削弱顶层隔离；本规约禁止这样运行。
 4. **部分 specialized/hosted tools 可绕过本地 tool-hook**：Hook 是 guardrail，不是完整沙箱；sandbox、`.codex`/`.agents` 保护路径与回合自检仍须保留。

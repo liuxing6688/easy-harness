@@ -33,6 +33,7 @@
 | 层 | 路径 | 职责 |
 | -- | ---- | ---- |
 | **宪章（本文件，常驻）** | `AGENTS.md` | 角色指针、R12、顶层禁令与回合自检、模式摘要、门禁链摘要、禁止绕过 Hook |
+| **沙箱外命令策略** | `.codex/rules/*.rules` | Codex 原生 `prefix_rule`；仅裁决沙箱外命令的 `allow` / `prompt` / `forbidden`，不承担角色、路径、内容或阶段判据 |
 | **机械执行权威** | `.codex/hooks/**`、`*-run.mjs`、`workflow-gate-lib.mjs` | 客观判据唯一执行权威；行为只可加强（R12） |
 | **说明权威（按需）** | `.codex/harness/spec/mechanical-gates.md` | Hook 一览、stop 判据、各门禁公式、双要素豁免、能力边界；§8.5–§8.6/§8.8 审核加固项（**R28–R38**）、**§8.7 机械层实际强度边界** |
 | **门禁链细则** | `.codex/harness/spec/gate-chain.md` | R9、无效成果物、用户确认 |
@@ -110,7 +111,7 @@
 | stop 门禁是否报出「工具不可用」（**R38**）？ | 这是**环境/工具**问题，不是代码质量问题。**不得**回派 DE 整改一个不存在的缺陷；须由 PM 标 `blocking`（按 R35 备齐证据）并 `AskQuestion` 请用户在「修工具 / 用户配等价命令覆盖 / 双要素豁免」间决策 |
 | 本回合是否为了摆脱 followup 而标了 `blocking: true`？（**R35**，见 §3 元约束 3） | 须补齐实质「## 阻塞原因」与「## 用户确认记录」阻塞决策留痕（Hook 自写、且在旁路台账里有出处的 fail-open 阻塞除外——那一行不是你能自己补的） |
 | `workflow_mode: single-task` 时是否已填「## 增量范围」四维、且未涉及 schema 变更？（**R37**） | 缺声明或涉及 schema 变更时门禁拒绝派发；后者须 `AskQuestion` 改回 `full`。折叠通道仍须 R14/R17/R32 齐备，**不得**照搬 hotfix R11 的跳过 |
-| 本回合是否试图改写门禁自身（`hooks.json` / `harness.config.json` / R5 运行时标记 / 工具链凭证 / `AGENTS.md` / `harness/spec/**`）？（**R29**） | 一律不得由代理写入（含改用 Shell）；须把 diff 与「加强了什么」呈现给用户，由用户本人编辑（R12） |
+| 本回合是否试图改写门禁自身（`hooks.json` / `harness.config.json` / `.codex/rules/*.rules` / R5 运行时标记 / 工具链凭证 / `AGENTS.md` / `harness/spec/**`）？（**R29**） | 一律不得由代理写入（含改用 Shell）；须把 diff 与「加强了什么」呈现给用户，由用户本人编辑（R12） |
 | 目标流程是否已 `cancelled: true`？（R10） | 禁止再在其上推进任何工作；除引导新流程的 PM 外不得发起角色 Task；不得改写该 `process.md` |
 
 ### 5.16–5.19 门禁、工具链、失败与终止
@@ -118,7 +119,7 @@
 | # | 禁令 / 义务 | 要点 |
 | - | ------------ | ---- |
 | 16 | **Hook 门禁不得绕过** | Hook 拒绝的调用不得改用其他工具绕过。**R28**（Shell 写文件）与 **R29**（改写门禁自身）为硬禁令；禁止以「便于通过」为由放宽门禁或摘除 Hook（R12）。路径分级与判据见 `mechanical-gates.md` §8.5。 |
-| 17 | **工具链安装须询问用户** | 禁止顶层直接装系统级工具链；交由 DE/TE「检测→询问→确认→安装」。Codex `PreToolUse` 不支持 `ask`，因此使用原生 sandbox / `approval_policy=on-request` 形成批准提示；Hook 的旧 `ask` 判据在适配层保守降级为 `deny`，不得靠重试绕过。细则见 `mechanical-gates.md` §8.5。 |
+| 17 | **工具链安装须询问用户** | 禁止顶层直接装系统级工具链；交由 DE/TE「检测→询问→确认→安装」。`.codex/rules/harness.rules` 对固定安装前缀增加沙箱外 `prompt`；但 Codex `PreToolUse` 不支持 `ask`，Hook 的旧 `ask` 判据仍在适配层保守降级为 `deny`，Rules 不得被解释为绕过该拒绝。授权须走真实对话确认 + 原生 sandbox / `approval_policy=on-request`，不得靠重试绕过。细则见 `mechanical-gates.md` §8.5。 |
 | 18 | **子 agent Task 失败必须阻塞** | 第 1 次：原 prompt 加失败背景重试（不得改核心指令、不得附加 `model`）。第 2 次：停重试；调 PM 标 `blocking: true`；展示失败摘要；`AskQuestion` 等用户。禁止：拆活自干、极简 prompt「帮过关」、附加 `model`、直接改受门禁文件「临时替代」、未完成却按完成推进。环境/工具链/脚本缺口：PM 阻塞 → 问用户 → 分派 DE/TE 修复；禁止顶层自行测/装/改 harness 脚本。 |
 | 19 | **必须尊重流程终止（R10）** | `cancelled: true` 时禁止再**在该流程上**推进任何工作：Hook 冻结该 `process.md` 的一切写入，并拒绝对其发起除 `project-manager` 外的全部角色 Task。PM Task 仅作为「引导用户建立新流程」的逃生口放行，**PM 同样不得改写或试图恢复该流程**。须提示不可逆并引导新流程；例外理由见 `gate-chain.md`。 |
 
@@ -155,3 +156,23 @@
 | docs/process | 任务进度 |
 
 模板见 `.codex/templates/`。用户无需手动初始化；PM 首次接收目标时须执行 `node .codex/scripts/bootstrap-docs.mjs`（或等价创建）。Harness/工程化基建归属见 §5.1（DE 执行，顶层不得代写）。
+
+## 8. 路径触发提醒（Cursor `.mdc` 迁移）
+
+Codex 原生 Rules 是沙箱外命令策略，不支持 Cursor `.mdc` 的 glob 提示词注入。以下规则以路径条件常驻；只有命中对应路径时才执行相关核对。
+
+### 8.1 编辑 `docs/**/process.md`
+
+- 编排硬约束以本文件的顶层禁令、回合自检和门禁链摘要为准。
+- 模式分诊、R2、R10：`.codex/harness/spec/workflow-modes.md` 与 `project-manager.toml`。
+- R9、无效成果物：`.codex/harness/spec/gate-chain.md`。
+- 客观公式与 stop 判据：`.codex/harness/spec/mechanical-gates.md`。机械判据以 Hook 为准；禁止绕过 Hook；豁免须同时具备 `gated-artifacts.json` 声明与 `## 用户确认记录`。
+
+### 8.2 编辑 `docs/**/test/**`、`docs/**/quality/**`、`e2e/**`、`test-results/qe/**` 或 `test-results/e2e/**`
+
+- R15/R16（lint / 静态扫描）的执行面见 `quality-engineer.toml`，说明权威见 `mechanical-gates.md` §8.2。
+- R14/R17/E2E 与 `gatePassed` 的执行面见 `test-engineer.toml`，说明权威见 `mechanical-gates.md` §8.3。
+- `gatePassed != true` 时不得推进下一批次或宣告完成；豁免须满足双要素，仅一项不生效。
+- R34：禁止手工创建、编辑或复用 `test-results/**` 机读产物；须在代理 Shell 通道内重跑对应 `*-run.mjs` 取得新的 `execProof`。仅 `test-results/recon/*.json` 可由 TE 基于实际查验手写。
+- R38：`toolUnavailable: true` 表示工具/依赖/网络/代理/证书问题，不等于代码质量失败；不得编造违规项或缺陷，须回报 PM，按 R35 标记有据阻塞并询问用户决策。
+- 执行权威始终是 Hook / `*-run.mjs`，文档不得单独放宽（R12）。

@@ -389,6 +389,9 @@ export function classifyHarnessSelfGovernedPath(filePath) {
   }
   if (HARNESS_APPROVAL_MARKERS.includes(p)) return 'approval-marker';
   if (HARNESS_GATE_CONFIG_PATHS.includes(p)) return 'gate-config';
+  // Codex command policy is itself a governance control. If an agent can edit
+  // project rules, it can weaken or remove sandbox-escape approval prompts.
+  if (/^\.codex\/rules\/.+\.rules$/.test(p)) return 'gate-config';
   // 说明权威（叙述 SSOT）：改动等价于调整门禁口径，须人工审阅
   if (/^\.codex\/harness\/spec\/.+\.md$/.test(p)) return 'gate-config';
   return null;

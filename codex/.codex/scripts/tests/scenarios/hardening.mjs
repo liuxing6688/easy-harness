@@ -90,7 +90,10 @@ export function hardeningScenarios() {
   check('SG7 R29：改写说明权威 mechanical-gates.md 被拒（须用户本人改）', 'deny', {
     hook: 'write', filePath: '.codex/harness/spec/mechanical-gates.md', processPath: readyProc, gatedPath: readyGated,
   });
-  check('SG8 R29：harness-state.json 无活跃角色时允许 PM bootstrap', 'allow', {
+  check('SG8 R29：改写 Codex Rules 被拒（须用户本人改）', 'deny', {
+    hook: 'write', filePath: '.codex/rules/harness.rules', processPath: readyProc, gatedPath: readyGated,
+  });
+  check('SG9 R29：harness-state.json 无活跃角色时允许 PM bootstrap', 'allow', {
     hook: 'write', filePath: '.harness/harness-state.json', processPath: noDispProc, gatedPath: noDispGated,
   });
 
@@ -183,7 +186,10 @@ export function hardeningScenarios() {
   check('SH13 Shell 改写门禁配置被拒（须用户本人改）', 'deny', {
     hook: 'shell', command: 'echo {} > .codex/harness.config.json', processPath: noDispProc, gatedPath: noDispGated,
   });
-  check('SH14 有分派计划时 PowerShell 写源码放行（不误伤正常开发）', 'allow', {
+  check('SH14 Shell 改写 Codex Rules 被拒（须用户本人改）', 'deny', {
+    hook: 'shell', command: 'Set-Content .codex/rules/harness.rules ""', processPath: noDispProc, gatedPath: noDispGated,
+  });
+  check('SH15 有分派计划时 PowerShell 写源码放行（不误伤正常开发）', 'allow', {
     hook: 'shell', command: 'Set-Content -Path src/app.ts -Value "x"', processPath: readyProc, gatedPath: readyGated,
   });
 
