@@ -137,9 +137,11 @@ export const CODE_EXTENSIONS = new Set([
 
 // R6：.claude/scripts|agents|hooks 三目录纳入机制门禁；其余 .claude/** 默认放行，
 // 但可被 dotClaudeExemptPatterns 精确豁免其中的非治理产物（如 .toolchain-install-approved.json）。
+// 注意：`.claude/rules/**` 曾在此豁免（理由「仅为提醒」）。规则层经 Claude Code 官方
+// `.claude/rules/` 机制真正注入上下文后该理由不成立，已改由 `classifyHarnessSelfGovernedPath`
+// 归 `gate-config`（R29，2026-08-14）；此处不再列出，避免留下「rules 属可自由改写」的信号。
 const DEFAULT_DOTCLAUDE_EXEMPT_PATTERNS = [
   '.claude/templates/**',
-  '.claude/rules/**',
   '.claude/harness-state.json',
   '.claude/hooks/hooks.json',
   '.claude/harness.config.json',

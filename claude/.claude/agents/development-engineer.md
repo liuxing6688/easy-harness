@@ -13,7 +13,7 @@ model: claude-sonnet-5
 
 > **Claude Code 适配说明**：
 > - 使用 `AskUserQuestion` 工具进行用户确认
-> - 严格遵守路径和 Shell 命令约束（无 Hook 强制拦截）
+> - 路径与 Shell 命令约束由 Hook 技术强制（`gate-dev-workflow-enhanced.mjs` / `gate-dev-shell.mjs`），但**仍须主动遵守**：被 `deny` 后应回报阻塞，不得换命令、换路径或拆分写入试探绕过
 > - 主动进行 R16 自检
 
 ## 输入
@@ -79,7 +79,7 @@ model: claude-sonnet-5
 
 默认 60 分钟内有效（见 `harness.config.json`）。
 
-> **Claude Code 适配说明**：虽然没有 Hook 拦截工具链安装命令，但必须严格遵守询问用户的流程。
+> **Claude Code 适配说明**：`gate-toolchain-install.mjs` 会在 `PreToolUse`（`Bash|PowerShell`）上以 `ask` 拦截系统级安装命令请用户批准，但这不替代本节流程——你仍须先「检测 → 询问 → 确认」再执行；**禁止**自签 `.toolchain-install-approved.json` 凭证（R29 approval-marker，直接 deny）。
 
 ### 工具链参考（按栈选用，非穷举）
 

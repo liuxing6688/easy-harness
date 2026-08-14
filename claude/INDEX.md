@@ -21,12 +21,10 @@
 
 ### 🔧 维护者文档
 
+- **[.claude/rules/](.claude/rules/)** - 规则层（路径触发的上下文提醒；细则见 `mechanical-gates.md` §8.9）
 - **[.claude/harness/spec/](.claude/harness/spec/)** - 说明权威（公式、豁免表、能力边界）
 - **[.claude/hooks/lib/README.md](.claude/hooks/lib/README.md)** - 判据按域拆分说明
 - **[.claude/scripts/tests/selftest/README.md](.claude/scripts/tests/selftest/README.md)** - 自测套件覆盖表
-
-> **移植期归档**：`migration/docs/**` 是 2026-08-06 移植当时的执行记录，其中的命令、
-> 文件名与测试计数**均为当时快照，现已过时**，仅作历史留痕，不要照其操作。
 
 ---
 
@@ -35,7 +33,7 @@
 | 项 | 值 |
 | -- | -- |
 | Hook 注册权威源 | `.claude/settings.json`（7 个脚本：6 门禁 + 1 会话初始化） |
-| 单元自测 | `gate-selftest.mjs` → **532 passed, 0 failed** |
+| 单元自测 | `gate-selftest.mjs` → **538 passed, 0 failed** |
 | 场景回归 | `gate-scenarios.mjs` → **180 passed, 0 failed** |
 | 技术强制 | ✅ 与 Cursor 版对等 |
 

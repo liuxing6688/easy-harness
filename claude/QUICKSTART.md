@@ -21,7 +21,7 @@ cd easy-harness/claude
 node .claude/scripts/gate-selftest.mjs
 ```
 
-**预期结果**: `532 passed, 0 failed`
+**预期结果**: `538 passed, 0 failed`
 
 ### 2. 场景回归（Hook 端到端裁决）
 
@@ -353,7 +353,7 @@ node .claude/scripts/gate-scenarios.mjs --verbose
 - [ ] `docs/process/process.md` 已初始化
 - [ ] `docs/design/gated-artifacts.json` 已配置
 - [ ] Claude Code 已检测到 hooks (`/hooks` 可列出，或启动时有提示)
-- [ ] 单元自测通过 (`node .claude/scripts/gate-selftest.mjs` → 532 passed)
+- [ ] 单元自测通过 (`node .claude/scripts/gate-selftest.mjs` → 538 passed)
 - [ ] 场景回归通过 (`node .claude/scripts/gate-scenarios.mjs` → 180 passed)
 
 ---

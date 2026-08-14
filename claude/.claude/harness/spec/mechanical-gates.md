@@ -30,7 +30,7 @@
 
 | Hook | 触发时机 | 拦截范围 | 放行条件 |
 | ---- | -------- | -------- | -------- |
-| `gate-dev-workflow-enhanced` | `PreToolUse`（matcher `Write|Edit`） | 源码/构建/根敏感路径（同前）+ **R6** `.claude/scripts\|agents\|hooks/**` + **`docs` 角色成果物**（`requirement`/`design`/`quality`/`test`/`process.md`，见 `isGatedRoleArtifactPath`）；`docs/` 下非文档扩展名亦按源码门禁；**R6 加强**：代码扩展名默认受门禁（豁免目录见 `gatedPaths.extensionGateExemptDirs`，§8.5）；**R29**：门禁自治资产（运行时标记 / 授权凭证 / 门禁配置与权威文本）一律 deny。仍豁免：templates/rules（见 `dotClaudeExemptPatterns`） | 判定顺序：**R10 cancelled** → **R29 自治资产** → **R5 身份基准健康度告警** → **R5 顶层 conversation_id** → **R5 角色↔路径** →（仅源码路径）`docs-only`/分派计划/**R3**/**R9**/阻塞 → 放行 |
+| `gate-dev-workflow-enhanced` | `PreToolUse`（matcher `Write|Edit`） | 源码/构建/根敏感路径（同前）+ **R6** `.claude/scripts\|agents\|hooks/**` + **`docs` 角色成果物**（`requirement`/`design`/`quality`/`test`/`process.md`，见 `isGatedRoleArtifactPath`）；`docs/` 下非文档扩展名亦按源码门禁；**R6 加强**：代码扩展名默认受门禁（豁免目录见 `gatedPaths.extensionGateExemptDirs`，§8.5）；**R29**：门禁自治资产（运行时标记 / 授权凭证 / 门禁配置与权威文本，**含 `.claude/rules/**.md`**）一律 deny。仍豁免：templates（见 `dotClaudeExemptPatterns`） | 判定顺序：**R10 cancelled** → **R29 自治资产** → **R5 身份基准健康度告警** → **R5 顶层 conversation_id** → **R5 角色↔路径** →（仅源码路径）`docs-only`/分派计划/**R3**/**R9**/阻塞 → 放行 |
 | `gate-dev-shell` | `PreToolUse`（matcher `Bash|PowerShell`） | `harness.config.json` 中 `gatedShellPatterns` 及项目额外模式（项目初始化、依赖安装等）；**R22**：最近派发为 `test-engineer` 时另拦截替代 E2E 启动命令（`checkTeAlternativeE2eStartup`，见 §8.4）；**R28**：写文件类命令按目标路径套用与 Write 同等判据（§8.5） | 判定顺序：R22 TE 冒烟 → **R28 写文件意图**（R29 自治资产 / opaque 写入 / 目标路径判据）→ `gatedShellPatterns` 命中则同 `gate-dev-workflow` 放行条件（含 R3/R9/R10） |
 | `gate-toolchain-install` | `PreToolUse`（matcher `Bash|PowerShell`） | `harness.config.json` 中 `toolchain.installPatterns`（winget、brew、apt、mise、asdf、nix、VS Build Tools 等） | 存在有效 `.toolchain-install-approved.json`：须 `userConfirmed: true` + 有效时间戳 + **`commandHash` 与本次命令匹配**（**R29 加强**，§8.5） |
 | `gate-role-sequence`（**R13**） | `PreToolUse`（matcher `Agent`） | 发起角色 Agent 前按门禁链机械校验（同前：R19/**R33**/R18/R15/R16 等）；**R10**：活跃流程 `cancelled` 时拒绝除 `project-manager` 外的**全部**角色（先于「不在门禁表即放行」的短路）；**R20**：声明轻量模式但缺「工作流模式确认」时拒绝除 PM/RA 外角色；**放行或 fail-open 前**对可解析角色执行 `recordDispatchedRole`（供 R5 角色↔路径） | 前置条件满足；或目标角色不在门禁表中（`project-manager`/`requirements-analyst` 恒放行，但仍落盘派发记录）；或解析不到目标角色名；`failClosed: false`。**能力边界（F-27）**：本 Hook 校验的是「下一角色所需成果物是否已存在且有效」（R13 门禁链），**不校验 frontmatter `phase` 的阶段序关系**——规约未定义 `phase` 的取值域与偏序，出厂模板即处于 `phase: requirement` 且在成果物齐备时允许直接发起 system-architect（回归 `scenarios/finding1.mjs` B1）。故 **R8「不得跳过前一角色」的阶段顺序维度由 `CLAUDE.md` §5.8 文字约束承担**，机械层拦的是「前一角色成果物未落地就派后一角色」。多轮迭代下成果物恒在，此时区分度由 **F-09/F-17 轮次时效判据**（`iterationRound`）承担 |
@@ -113,9 +113,9 @@ Hook 解析 `## 进度列表` 时同时识别中文角色名与 `.claude/agents`
 > - **⚠ 默认命令禁止携带 `--exitCode`（2026-07-29 审核修复，唯一权威）**：jscpd-rs 的两个标志是**两套独立逻辑**——`--threshold N` 为「重复率 ≥ N% 时以错误码退出」（即本节声明的判据），`--exitCode N` 为「**只要检出任何重复**就用该退出码」（与阈值无关）。历史默认命令同时带 `--exitCode 1`，使 `--threshold 5` **完全失效**，R16 实际退化为**零重复容忍**——任何真实宿主项目都不可能通过，属与 R19 出厂模板缺陷同级的硬阻塞。实测（本仓库 2.78% 重复率）：`--threshold 5` 退出 0，加 `--exitCode 1` 后退出 1，`--threshold 1` 退出 1（证明阈值本身工作正常）。移除 `--exitCode` 是让实现回到**文档声明的判据**，**不是**放松门禁（R12）；反之，重新加回 `--exitCode` 属于把门禁改成一个不可达标准，等同于让 R16 永久红灯，一律禁止。机读回归：`tests/selftest/r16-static-scan.mjs`「默认命令不得含 `--exitCode`」。**命令解析优先级**：`harness.config.json → qe.commands.dupCheck`/`qe.commands.securityScan` 覆盖 > 框架默认值；多数项目不必手配 config。
 > - **判据**：`staticScanPassed = (dupCheckExempt || duplication.gatePassed) && (securityScanExempt || security.gatePassed)`；`docs-only` 视为满足。QE 记录完成但 `staticScanPassed=false` 时 `gate-stop-workflow` 注入 followup，且**不得发起 test-engineer**（判定函数见 `rule-index.md`）。
 > - **⚠ 重复率须「退出码 + 报告」双判（2026-08-11 审核修复 F-13，唯一权威）**：历史 `duplication.gatePassed` **只**看 `exitCode === 0`，从不把 jscpd JSON 报告里的总重复率与 `--threshold` 比对。于是只要工具因任何原因以 0 退出（版本差异、阈值标志语义变化、报告已写盘但退出码未反映），子门禁即失去判别力——实测出现过 `duplication.gatePassed = true` 而 `output` 同时列出 20 余处 `Clone found` 的组合。现改为**双判**：`exitCode === 0` **且** 报告重复率 `< --threshold` 才通过，任一判失败即失败（`static-scan-run.mjs` `applyDupReportGate`）。产物新增 `duplication.reportPercentage` / `duplication.reportThreshold` 两个机读字段。**报告缺失或不可解析时不放行**（`reason: 'dup-report-unreadable'`）——R16 的判别力依赖报告，读不到报告等于没测；这与 R38「工具确实跑不起来」是**不同出口**，后者仍由退出码通道识别并走双要素豁免。判定函数：`parseDupThreshold` / `extractDupPercentage` / `evaluateDuplicationReport`（`static-scan-run-lib.mjs`）；回归见 `r16-static-scan.mjs` F-13 四条。
-> - **⚠ 默认 `--ignore` 须排除 harness 自身（2026-08-11 审核修复 F-13，唯一权威）**：历史默认值未排除 `.claude/**` 与 `migration/**`，于是门禁自身的 3 万余行（含 `.claude/scripts/tests/**` 里成片同构的 fixture 与用例）全部进入重复率**分母**。实测本仓库 `lines: 32120 / sources: 204`，49 对克隆中 48 对落在 `.claude/scripts/tests/**` 与 `migration/docs/**`，业务侧重复率被摊薄约两个数量级。规约此前只防了「把门槛调松」（禁止提高 `--threshold`），没防「把分母掺大」——两者对判别力的影响同向，故一并禁止（R12）。默认命令现固定排除 `.claude/**` 与 `migration/**`；回归见 `r16-static-scan.mjs`「默认 `--ignore` 须排除 `.claude/**` 与 `migration/**`」。
+> - **⚠ 默认 `--ignore` 须排除 harness 自身（2026-08-11 审核修复 F-13，唯一权威）**：历史默认值未排除 `.claude/**` 与 `migration/**`，于是门禁自身的 3 万余行（含 `.claude/scripts/tests/**` 里成片同构的 fixture 与用例）全部进入重复率**分母**。实测本仓库 `lines: 32120 / sources: 204`，49 对克隆中 48 对落在 `.claude/scripts/tests/**` 与 `migration/docs/**`，业务侧重复率被摊薄约两个数量级。规约此前只防了「把门槛调松」（禁止提高 `--threshold`），没防「把分母掺大」——两者对判别力的影响同向，故一并禁止（R12）。默认命令现固定排除 `.claude/**`；回归见 `r16-static-scan.mjs`「默认 `--ignore` 须排除 `.claude/**`」。**`migration/**` 已于 2026-08-14 移出默认排除集**（R12 加强方向，见下「门禁强度调整留痕」）：该模式当初只为排除 harness 自带的 `migration/docs/**`（移植期留痕，已迁至仓库 `docs/migration/`，不再随适配交付），留着只会盲排**接入方自己的** `migration/` 产品源码——而 `harness.config.json` `gatedPaths.sourceDirs` 明确把 `migrations` 列为受门禁的源码目录。回归见 `r16-static-scan.mjs`「默认 `--ignore` 不得排除 `migration/**`」。
 > - **适用性豁免**：见上表 R16 两行（重复代码/安全扫描分别独立判定）。
-> - **反弱化条款（2026-07-28 QE R16 消重复盘新增，R12 显式化）**：**禁止**以「降低打回率/减少误报体感」为由提高 `jscpd-rs --threshold`、扩大 `--ignore` 排除目录（默认排除目录——`node_modules`/`dist`/`build`/`vendor`/`target`/`coverage`/`.git`/`test-results`，以及门禁自身的 `.claude`/`migration`（F-13，见上）——以外的任何收窄；**缩小**默认排除集同样禁止，删掉 `.claude`/`migration` 即把分母重新掺大）或缩减 `--reporters`，也**禁止**加回 `--exitCode`（后者不是收紧而是把门禁改成不可达标准，见上一条）。确因目录结构特殊（如 monorepo 内确需排除的生成代码目录）需要覆盖 `qe.commands.dupCheck` 时，须在质量报告与 `detail-design-spec.md` §5 写明**具体排除路径 + 排除理由**；**修改阈值**（无论升高或降低）一律视为需要用户确认的机械门禁调整，须在 `process.md`「## 用户确认记录」留痕说明理由，否则 QE 不得采用覆盖值——该调整不受本节其余「多数项目不必手配 config」的默认豁免。
+> - **反弱化条款（2026-07-28 QE R16 消重复盘新增，R12 显式化）**：**禁止**以「降低打回率/减少误报体感」为由提高 `jscpd-rs --threshold`、扩大 `--ignore` 排除目录（默认排除目录——`node_modules`/`dist`/`build`/`vendor`/`target`/`coverage`/`.git`/`test-results`，以及门禁自身的 `.claude`（F-13，见上）——以外的任何收窄；**缩小**默认排除集同样禁止，删掉 `.claude` 即把分母重新掺大。**例外**：`migration` 已于 2026-08-14 有意移出默认排除集，因其只排除接入方的产品源码而非门禁自身，移除属加强；**不得**以「恢复 F-13 原样」为由把它加回）或缩减 `--reporters`，也**禁止**加回 `--exitCode`（后者不是收紧而是把门禁改成不可达标准，见上一条）。确因目录结构特殊（如 monorepo 内确需排除的生成代码目录）需要覆盖 `qe.commands.dupCheck` 时，须在质量报告与 `detail-design-spec.md` §5 写明**具体排除路径 + 排除理由**；**修改阈值**（无论升高或降低）一律视为需要用户确认的机械门禁调整，须在 `process.md`「## 用户确认记录」留痕说明理由，否则 QE 不得采用覆盖值——该调整不受本节其余「多数项目不必手配 config」的默认豁免。
 >
 > **R25（设计阶段「同构模块识别」章节机读，唯一权威定义，2026-07-28 QE R16 消重复盘新增）**：发起 `requirement-reviewer` 前（`full`/`single-task`，`hotfix`/`docs-only` 豁免），`checkIsomorphicModuleSectionReady()` 校验活跃 `detail-design-spec.md` 是否含「## 同构模块识别（须逐项列出）」章节：设计文档为 stub（仅标题、无正文）时跳过；非 stub 时须**要么**含「同构组名称」+「共享 Primitive 名称」两列的表格且至少一条真实数据行（每行两列均非空），**要么**显式声明「已排查，无同构资源族」并附非空排查依据（去除标点空白后不少于 4 字）。缺章节/章节为空/表格无数据行/声明缺依据时 `gate-role-sequence` 拒绝发起 `requirement-reviewer`。**背景**：R16 全仓重复代码复盘发现相似资源族（CRUD 路由、页面脚手架、测试 fixture、E2E helper）在设计阶段未被前置识别，并行开发工程师各自「复制改」导致 QE 首轮必然因 duplication 打回；本规则要求设计阶段前置排查并声明共享 primitive，从源头减少同构克隆。**能力边界**：机读只证明「该章节存在且非占位敷衍」，不证明排查是否穷尽、共享 primitive 设计是否合理——语义充分性仍由 `requirement-reviewer`「架构设计原则」维度人工审核。
 >
@@ -262,7 +262,7 @@ Hook 脚本路径：`.claude/hooks/`。修改 Hook 行为时须同步更新本�
 | ---- | ---- | ---- | ---- |
 | `runtime-marker` | `.claude/hooks/.root-conversation-id.json`、`.claude/hooks/.dispatched-roles.json` | **deny** | 只应由 Hook 进程自身落盘；代理写入即等于自签身份。解法：走正常 Agent 派发让 Hook 自行落盘 |
 | `approval-marker` | `.claude/hooks/.toolchain-install-approved.json` | **deny** | 代表「用户已批准」，代理写入即自签授权。解法：直接执行安装命令，由 `gate-toolchain-install` 在 `PreToolUse`（`Bash|PowerShell`）上 `ask` 请用户批准；如需批量预授权，由**用户本人**创建该凭证 |
-| `gate-config` | `.claude/settings.json`、`.claude/settings.local.json`（Claude Code 的 Hook 注册表）、`.claude/hooks.json`（历史路径，R12 保留）、`.claude/harness.config.json`、`CLAUDE.md`、`.claude/harness/spec/**.md` | **deny** | 门禁强度旋钮与权威文本；「是否放宽门禁」不能由被约束方自行决定。摘掉 `settings.json` 里任一条 Hook 注册即令对应门禁整体消失，强度高于任何 config 旋钮。解法：代理呈现 diff/理由，由**用户本人**编辑 |
+| `gate-config` | `.claude/settings.json`、`.claude/settings.local.json`（Claude Code 的 Hook 注册表）、`.claude/hooks.json`（历史路径，R12 保留）、`.claude/harness.config.json`、`CLAUDE.md`、`.claude/harness/spec/**.md`、`.claude/rules/**.md` | **deny** | 门禁强度旋钮与权威文本；「是否放宽门禁」不能由被约束方自行决定。摘掉 `settings.json` 里任一条 Hook 注册即令对应门禁整体消失，强度高于任何 config 旋钮。解法：代理呈现 diff/理由，由**用户本人**编辑 |
 | `gate-code` | `.claude/hooks/*.mjs`、`.claude/hooks/lib/**`、`.claude/scripts/{*-run*,*-lib,gate-*,exec-proof*,tool-availability*,startup-smoke*}.mjs`、`.claude/agents/*.md`、`.claude/scripts/tests/**` | **deny** | **F-21 补齐**：历史清单只锁配置文本，于是门禁**代码**、机读证据**运行器**、角色**强制约束**三类只受「角色↔路径」约束——而 §5.1 明文把 harness 基建授权给 DE。合起来即：DE 在合法分派下改写 `lint-run.mjs` 让它恒写 `gatePassed: true`，产物随后由**真实**私钥签名、R34 验签通过，stop 门禁收下一份「合法签名背书的假结果」。锁配置而不锁代码等于给 R12 留后门。解法同 `gate-config`：呈现完整 diff + 理由，由**用户本人**落盘；即使是加强方向亦然 |
 | 角色门禁 | `.claude/harness-state.json` | 期望 `project-manager` | 它决定所有门禁读哪一份 `process.md`；保留 PM bootstrap 窗口 |
 | 角色门禁 | `docs/[{feature}/]design/gated-artifacts.json` | 期望 `system-architect` | **2026-07-29 审核补齐**：它是 `harness.config.json` 的 merge 另一半（`extra*` 收紧项、各 `{gate}Applicability` 豁免第一要素、`productionStartupCommand`）。历史实现把它整体排除在门禁外（`isGatedDevPath` 直接 return false 且不在角色成果物判据内），等于**任何角色、任何阶段都能改写门禁强度**——R29 锁死了 `harness.config.json` 却放开了它。现纳入角色门禁（`isGatedArtifactsConfigPath`），Write 与 Shell（R28 `targets`）两通道同判；仍不走 DE 分派计划/R3/R9，避免 SA 在开发前产出它时死锁 |
@@ -287,11 +287,20 @@ Shell 通道同理刻意用 `deny`：否则「Write 被拒 → 改用 Shell → 
 任意安装命令，现要求凭证与本次命令一一绑定。凭证本身已禁止代理创建（见上表），
 故常态路径是每条系统级安装命令都经 `gate-toolchain-install` 的 `ask` 由用户批准。
 
-**残留缺口（坦诚披露）**：`.claude/templates/**` 与 `.claude/rules/**` 仍为豁免——
-前者不被 Hook 直接读取（门禁读 `docs/` 成果物），后者仅为提醒，风险较低；但被污染的模板
-会向下游传播错误结构，仍需人审。另：`gated-artifacts.json` 现已收敛到 SA，但 SA 仍是 AI 角色——
-它声明的 `{gate}Applicability:"n/a"` 只是双要素豁免的**第一**要素，第二要素（`process.md`
-用户确认行）同样由 AI 书写，故整套豁免机制的最终强度受 §8.7 边界 1 约束。
+**残留缺口（坦诚披露）**：`.claude/templates/**` 仍为豁免——它不被 Hook 直接读取（门禁读
+`docs/` 成果物），但被污染的模板会向下游传播错误结构，仍需人审。另：`gated-artifacts.json`
+现已收敛到 SA，但 SA 仍是 AI 角色——它声明的 `{gate}Applicability:"n/a"` 只是双要素豁免的
+**第一**要素，第二要素（`process.md` 用户确认行）同样由 AI 书写，故整套豁免机制的最终强度受
+§8.7 边界 1 约束。
+
+**`.claude/rules/**` 豁免回收（2026-08-14，R12 加强方向）**：该目录原与 `templates/` 并列
+豁免，理由是「Claude Code 不加载 `.mdc` 规则，此目录仅为冗余留痕」。这个前提已不成立——
+Claude Code 原生支持 `.claude/rules/`（递归发现全部 `.md`；`paths` frontmatter 决定注入时机），
+适配层已把两份 `.mdc` 改写为真正生效的 `.md` 并新增三份（见 §8.9）。规则一旦真正注入代理
+上下文，它与 `CLAUDE.md` 同属「写给代理看的强制文本」：可写等于可把「禁止手工编辑
+`test-results`」改成「必要时可补字段」，再按改后的规则行事。故按 R12 只可加强的方向收回
+豁免，归 `gate-config`（`classifyHarnessSelfGovernedPath`；Write 与 Shell 两通道同判）。
+回归见 `r28-r31-hardening.mjs`「R29: 规则层 …」两条（已做反事实对照：去掉判据即转红）。
 
 #### R30：门禁输入编码鲁棒性
 
@@ -473,6 +482,20 @@ Gradle、CMake、Elixir、Flutter、Swift 等纳管。两层口径不一致的�
 | **换取的新增判据（非纯放松）** | 「形状变、兼容未破」路径须①在两维说明列声明**兼容性回归用例**（`increment-scope-missing-compat-regression`）；②在折叠通道唯一测试轮次落地该用例执行记录（`checkIncrementCompatRegressionReport`，进入 `finalTestComplete`）。缺任一条即拒绝，等价于旧的硬禁用——放松的是「哪类变更可用增量档」，不是「验证可以少做」 |
 | **决策** | 经用户于 2026-08-11 明确确认（「剩下两项按照审查报告中提到的建议进行修复」）后按建议 #18 实施。备选的「维持一刀切」被否决——它使增量档在最常见的增量形态上永久不可用，与 R16 那次「不可达门禁终被摘除」同理 |
 | **后续禁止事项** | 不得由任何代理判定「我这个变更算兼容」——「是否需要迁移 / 是否破坏兼容」是一次如实声明，声明「否」却实际提交迁移脚本按**虚假声明**处理（复盘清单 B13）；不得以本条为先例把其它硬禁用改为「按性质分档」；兼容性回归用例缺失时**不得**走双要素豁免绕过，只能改走 `full` |
+
+##### 门禁强度调整留痕（R16 默认 `--ignore` 移出 `migration/**`，2026-08-14）
+
+移植期留痕 `migration/docs/**` 迁出本适配（移至仓库 `docs/migration/`）后，复核 F-13 的
+`--ignore` 默认值发现该模式已与其立论脱钩。**方向为加强**，按 R12 自动授权实施，此处留痕备查。
+
+| 项 | 内容 |
+| -- | ---- |
+| **收紧了什么** | 默认排除集去掉 `**/migration/**`，接入方仓库的 `migration/` 目录自此进入重复率检测的**分子与分母**。受检代码集合扩大，能通过 R16 的项目集合缩小 |
+| **为什么原模式失效** | F-13 加它的唯一理由是「排除门禁自身」——当时 49 对克隆中 48 对落在 `.claude/scripts/tests/**` 与 `migration/docs/**`，后者是 harness 自带的移植报告。该目录已不随适配交付，模式在本目录树内不再命中任何文件，剩下的全部效果就是盲排**接入方自己的** `migration/` |
+| **为何属加强而非放松** | `harness.config.json` `gatedPaths.sourceDirs` 明确列入 `migrations`，即规约**已声明**数据库迁移目录属受门禁的产品源码。默认 `--ignore` 却把它整体排除——属「实现宽于声明」，补齐即 R12「文档声明强于实现 ⇒ 补实现」的自动授权方向，不需用户裁定。与 F-13 修的「掺大分母」相比：一个虚增分母、一个把真实业务代码移出分子分母，**同为削弱判别力**，故同向禁止 |
+| **证据** | ① `git ls-files claude/migration` 迁移前仅 7 个 `.md`，全为 2026-08-06/07 自述式完成报告，无产品源码；② 迁移后 `easy-harness/claude/` 内 `**/migration/**` 命中数为 0；③ `harness.config.json` `gatedPaths.sourceDirs` 含 `migrations`，与该排除项直接冲突 |
+| **替代出口（未收窄可覆盖性）** | 确有仓库的 `migration/` 是生成式产物（如工具生成的 SQL 迁移、逐版本快照式脚本），仍可覆盖 `qe.commands.dupCheck` 排除之——但须按本节既有要求在质量报告与 `detail-design-spec.md` §5 写明**具体排除路径 + 排除理由**，不再享有「默认就排除」的静默待遇 |
+| **后续禁止事项** | **不得**以「恢复 F-13 原样」「与 cursor/trae/codex 适配对齐」为由把 `**/migration/**` 加回默认排除集——那是把已声明的产品源码重新移出检测面；`.claude/**` 的排除**必须保留**（它才是「门禁自身」那一半，删除即 F-13 原缺陷复发） |
 
 ### 8.6 交付可用性与体验验收（R32–R33）
 
@@ -860,3 +883,46 @@ PM 写 `process.md`——该写入正常放行，不构成死锁；`loop_limit: 
 配置解析崩溃一概**不**归入工具不可用——它们恰恰是本门禁要抓的东西。唯一例外是解释器/包管理器
 压根没装，那不是产品的问题。实现上表现为只采信 `category === 'command-not-found'`：
 `dependency-fetch`（应用缺自身依赖）、`network`（应用连不上数据库）等一律回落为产品缺陷。
+
+### 8.9 规则层（`.claude/rules/`，2026-08-14 适配）
+
+**背景**：Cursor 版以 `.cursor/rules/*.mdc` 承载「编辑特定文件时自动注入的提醒」。移植期
+认为 Claude Code 不支持该机制，故把两份规则的内容**分散复制**进 `project-manager.md` /
+`quality-engineer.md` / `test-engineer.md` 的开篇提醒块，并在 `.claude/rules/` 留下两份
+`.mdc` 作为「待兼容冗余」。
+
+**事实修正**：Claude Code 原生支持 `.claude/rules/`（官方文档
+`https://code.claude.com/docs/en/memory#organize-rules-with-claude/rules/`）。要点：
+
+| 事项 | 官方口径 | 原 `.mdc` 的问题 |
+| ---- | -------- | ---------------- |
+| 扩展名 | 递归发现目录下**全部 `.md`** | `.mdc` 不被发现，两份规则**从未生效** |
+| 触发字段 | frontmatter `paths`（glob 数组） | 写的是 Cursor 的 `globs`（逗号分隔字符串） |
+| 常驻与否 | 无 `paths` ⇒ 随会话常驻，与 `.claude/CLAUDE.md` 同优先级；有 `paths` ⇒ 读到匹配文件时注入 | `alwaysApply: false` 不是官方字段 |
+| 优先级 | 用户级 `~/.claude/rules/` 先于项目级加载 | — |
+| 压缩行为 | 路径触发的规则**不随 `/compact` 自动重注入**，须再次读到匹配文件 | — |
+
+**本次改动**：两份 `.mdc` 改写为生效的 `.md`（`globs` → `paths`），删除三个 agent 文件里的
+分散副本，并新增三份规则。当前 5 份**全部**带 `paths`（路径触发）：
+
+| 规则 | 触发面 | 承载内容 |
+| ---- | ------ | -------- |
+| `harness-process.md` | `docs/**/process.md`、`.claude/harness-state.json` | 门禁链/模式/R10/双要素/确认真实性指引 |
+| `harness-design-artifacts.md` | `docs/**/requirement/**`、`docs/**/design/**` | 角色↔路径、结构硬要件（R18/R25/R32/R33）、R26 确认 |
+| `harness-test-artifacts.md` | `docs/**/test/**`、`docs/**/quality/**`、`test-results/**`、`e2e/**` | R14–R17、R32、R34、R38、F-23 |
+| `harness-source-code.md` | 常见源码目录与构建清单 | R5/R21/R23/R3/R28/R29 写入通道 |
+| `harness-gate-assets.md` | `CLAUDE.md`、`.claude/{rules,hooks,scripts,agents,harness/spec}/**`、注册表与配置 | R29 四级分类与「用户本人落盘」通道、R12 方向铁律 |
+
+**三条硬约束**：
+
+1. **规则层不新增约束**，只做指引与转述。任何判定回到 Hook（机械执行权威）与 §8 各节
+   （说明权威）。规则文本与说明权威冲突时以说明权威为准，且须按 R12 补齐弱的一侧。
+2. **规则层不承担唯一权威**。路径触发的规则不保证在写入前一定已注入（须先读到匹配文件），
+   且不随 `/compact` 重注入。故**硬禁令必须同时存在于** `CLAUDE.md`（常驻）、对应
+   `.claude/agents/*.md`（分派即注入）或 Hook 判据中——本次删除三个 agent 文件里的分散副本
+   前已逐条核对：R34/R38/双要素/gatePassed 的实质条文在 QE/TE 文件正文中均有独立留存，
+   删除的只是开篇的重复摘要。
+3. **该目录下不放 `README.md`**。无 `paths` 的 `.md` 会被当作常驻规则注入上下文，一份说明
+   文件会白白占用每个会话的常驻预算——规则层的说明写在本节。
+
+**规则文件属 `gate-config`**（R29）：见 §8.5「`.claude/rules/**` 豁免回收」。

@@ -121,7 +121,6 @@
     ],
     "dotClaudeExemptPatterns": [
       ".claude/templates/**",
-      ".claude/rules/**",
       ".claude/harness-state.json",
       ".claude/hooks.json",
       ".claude/harness.config.json",

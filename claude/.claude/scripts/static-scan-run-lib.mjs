@@ -25,14 +25,25 @@ import { applyToolAvailability } from './tool-availability-lib.mjs';
  * 回归见 `tests/selftest/r16-static-scan.mjs`「默认命令不得含 --exitCode」。
  *
  * **`--ignore` 须排除 harness 自身（2026-08-11 审核修复 F-13）**：历史默认值
- * 未排除 `.claude/**` 与 `migration/**`，于是门禁自身的 3 万余行（含 `tests/**` 里成片
- * 同构的 fixture 与用例）全部进入重复率**分母**。实测本仓库：`lines: 32120 / sources: 204`，
- * 49 对克隆中 48 对落在 `.claude/scripts/tests/**` 与 `migration/docs/**`，业务侧重复率
+ * 未排除 `.claude/**`，于是门禁自身的 3 万余行（含 `tests/**` 里成片同构的 fixture
+ * 与用例）全部进入重复率**分母**。实测当时：`lines: 32120 / sources: 204`，49 对克隆中
+ * 48 对落在 `.claude/scripts/tests/**` 与当时的 `migration/docs/**`，业务侧重复率
  * 被摊薄两个数量级。效果等价于把阈值放大到不可达——规约只防了「把门槛调松」（禁止提高
  * `--threshold`），没防「把分母掺大」。两者对门禁判别力的影响同向，故一并禁止（R12）。
+ *
+ * **`**\/migration\/**` 已于 2026-08-14 移出默认排除集（R12 加强方向）**：该模式当初
+ * 只为排除 harness 自带的 `migration/docs/**`（移植期留痕），那批文件已迁至仓库 `docs/migration/`，
+ * 不再随适配交付。留着它反而只对**接入方自己的** `migration/` 生效——而
+ * `harness.config.json` `gatedPaths.sourceDirs` 明确把 `migrations` 列为受门禁的产品源码目录，
+ * 即「数据库迁移属业务代码」。继续盲排等于让一类产品源码永久逃出 R16，
+ * 与 F-13 要修的「掺大分母」同为削弱判别力，方向相反而性质相同。
+ * 移除后覆盖面**扩大**（更多业务代码入检），属加强不属放松；
+ * 确有仓库确需排除（如生成式 SQL 迁移），走既有出口：覆盖 `qe.commands.dupCheck`
+ * 并在质量报告与 `detail-design-spec.md` §5 写明具体路径与理由。
+ * 回归见 `tests/selftest/r16-static-scan.mjs` F-13 两条。
  */
 export const DEFAULT_DUP_COMMAND =
-  'npx --yes jscpd-rs --threshold 5 --reporters json --output test-results/qe/.jscpd --ignore "**/node_modules/**,**/dist/**,**/build/**,**/.git/**,**/test-results/**,**/vendor/**,**/target/**,**/coverage/**,**/.claude/**,**/migration/**" .';
+  'npx --yes jscpd-rs --threshold 5 --reporters json --output test-results/qe/.jscpd --ignore "**/node_modules/**,**/dist/**,**/build/**,**/.git/**,**/test-results/**,**/vendor/**,**/target/**,**/coverage/**,**/.claude/**" .';
 
 /** 默认重复率阈值（%）；`--threshold` 缺省时按此值比对报告。 */
 export const DEFAULT_DUP_THRESHOLD = 5;

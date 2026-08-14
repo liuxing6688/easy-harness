@@ -40,12 +40,18 @@ test('R16: 默认重复代码命令须以 --threshold 生效，且不得含 --ex
 });
 
 // ── F-13：重复率判据的两处失效 ──────────────────────────────────────────────
-test('R16 F-13: 默认 --ignore 须排除 .claude/** 与 migration/**（否则门禁自身掺大分母）', () => {
+test('R16 F-13: 默认 --ignore 须排除 .claude/**（否则门禁自身掺大分母）', () => {
   const cmd = resolveDupCommand({ override: null });
   // 把 harness 自身 3 万余行（含成片同构的 fixture/用例）计入分母，业务侧重复率被摊薄
   // 两个数量级，效果等价于把阈值放大到不可达。与「提高 --threshold」同向，一并禁止（R12）。
   assert.match(cmd, /\*\*\/\.claude\/\*\*/, '默认 --ignore 须排除 .claude/**');
-  assert.match(cmd, /\*\*\/migration\/\*\*/, '默认 --ignore 须排除 migration/**');
+});
+test('R16 F-13: 默认 --ignore 不得排除 migration/**（那是接入方的产品源码）', () => {
+  const cmd = resolveDupCommand({ override: null });
+  // 2026-08-14：该模式原为排除 harness 自带的 migration/docs/**（移植期留痕），该目录已迁出适配。
+  // 留着只对接入方自己的 migration/ 生效，而 harness.config.json gatedPaths.sourceDirs
+  // 把 `migrations` 列为受门禁的产品源码目录——盲排等于让一类业务代码永久逃出 R16。
+  assert.doesNotMatch(cmd, /\*\*\/migration\/\*\*/, 'migration/** 属产品源码，不得列入默认排除集');
 });
 test('R16 F-13: parseDupThreshold 从命令解析阈值，缺省/非法回退默认值', () => {
   assert.equal(parseDupThreshold('jscpd --threshold 10 .'), 10);

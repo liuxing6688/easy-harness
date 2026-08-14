@@ -284,6 +284,34 @@ test('R28 加强（F-21）: Shell 改写/删除运行器不再被豁免早退，
   }
 });
 
+// 规则层（2026-08-14）：`.claude/rules/*.md` 经 Claude Code 官方规则机制自动注入代理上下文，
+// 与 CLAUDE.md 同属「写给代理看的强制文本」。历史上整个目录在 dotClaudeExemptPatterns 里被
+// 豁免（理由「仅为提醒」），规则真正生效后该理由不再成立——可写等于可把「禁止手工编辑
+// test-results」改成「必要时可补字段」，然后自己按改后的规则行事。
+test('R29: 规则层 .claude/rules/**.md 归类为 gate-config（deny）', () => {
+  for (const p of [
+    '.claude/rules/harness-process.md',
+    '.claude/rules/harness-test-artifacts.md',
+    '.claude/rules/harness-gate-assets.md',
+    '.claude/rules/frontend/style.md',
+  ]) {
+    assert.equal(classifyHarnessSelfGovernedPath(p), 'gate-config', p);
+    assert.equal(harnessSelfGovernedVerdict('gate-config', p).permission, 'deny', p);
+  }
+});
+
+test('R29: Shell 通道改写规则层同样拦截（R28 同源）', () => {
+  for (const c of [
+    'echo x > .claude/rules/harness-process.md',
+    'Set-Content .claude/rules/harness-test-artifacts.md -Value x',
+    'rm .claude/rules/harness-gate-assets.md',
+  ]) {
+    const sg = classifyShellWriteIntent(c).selfGoverned;
+    assert.equal(sg.length, 1, c);
+    assert.equal(sg[0].kind, 'gate-config', c);
+  }
+});
+
 test('R29 加强（F-21）: 非门禁脚本与产品代码仍不受 gate-code 影响', () => {
   for (const p of [
     '.claude/scripts/bootstrap-docs.mjs',

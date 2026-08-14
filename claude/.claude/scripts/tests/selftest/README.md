@@ -9,6 +9,7 @@
 | `r*.mjs` / `b1-*.mjs` | 对应规则用例 |
 | `templates-vs-gates.mjs` | **出厂模板 ↔ 出厂门禁一致性**：加载 `.claude/templates/` 真实文件，断言被 Hook 解析的章节能定位、最小合规填充后判据真的通过；**F-07 加固**：`workflow-modes.md`「迭代模式（文档路径）」表须覆盖 `LITE_WORKFLOW_MODES` + `full` 的每一个模式（缺行即 F-07 成因） |
 | `gated-artifacts-config.mjs` | R29 加强：`docs/**/design/gated-artifacts.json` 的角色门禁（仅 SA 可写，Write/Shell 同判） |
+| `r28-r31-hardening.mjs` | R28 Shell 写意图 / R29 自治资产四级分类 / R30 / R31；**规则层收回豁免**（`.claude/rules/**.md` 归 `gate-config`，Write 与 Shell 同判，见 `mechanical-gates.md` §8.9） |
 | `r34-exec-proof.mjs` | R34 执行证明：合法签发+落签必须放行（防不可达）；缺字段/未签发/未知 nonce/kind 错配/私钥未消费/签名失配六类形态必须被识破 |
 | `r35-blocking-evidence.mjs` | R35 阻塞释放证据：出厂模板与占位不算实质阻塞原因；机器起源单独放行；fail-open 落盘的阻塞须天然满足本判据 |
 | `r36-gate-exception.mjs` | R36 判定期异常：各通道裁决（deny/ask/followup）、write 通道的 process.md 修复例外、文案须指向用户级逃生开关 |

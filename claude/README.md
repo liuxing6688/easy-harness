@@ -44,6 +44,24 @@
 ### 配置文件
 - **[harness.config.json](./.claude/harness.config.json)** - 门禁配置
 
+### 规则层（5个，路径触发）
+
+位于 [.claude/rules/](./.claude/rules/)。Claude Code 原生机制：目录下**全部 `.md` 递归发现**，
+frontmatter `paths` 决定何时注入；**无 `paths` 的规则随会话常驻**（与 `.claude/CLAUDE.md` 同优先级）。
+
+| 规则 | 触发面 |
+| ---- | ------ |
+| `harness-process.md` | `docs/**/process.md`、`.claude/harness-state.json` |
+| `harness-design-artifacts.md` | `docs/**/requirement/**`、`docs/**/design/**` |
+| `harness-test-artifacts.md` | `docs/**/test/**`、`docs/**/quality/**`、`test-results/**`、`e2e/**` |
+| `harness-source-code.md` | 常见源码目录与构建清单 |
+| `harness-gate-assets.md` | `CLAUDE.md`、`.claude/{rules,hooks,scripts,agents,harness/spec}/**` 等门禁自治资产 |
+
+> 规则层**只做指引与转述，不新增约束**；判定一律回到 Hook。规则文件本身属 **R29** `gate-config`
+> （代理禁写，须用户本人落盘）。该目录**不要放 `README.md`**——无 `paths` 的 `.md` 会被当作常驻规则。
+> 细则见 [mechanical-gates.md §8.9](./.claude/harness/spec/mechanical-gates.md)；
+> 官方文档：https://code.claude.com/docs/en/memory#organize-rules-with-claude/rules/
+
 ### 角色定义（7个）
 - [project-manager.md](./.claude/agents/project-manager.md)
 - [requirements-analyst.md](./.claude/agents/requirements-analyst.md)

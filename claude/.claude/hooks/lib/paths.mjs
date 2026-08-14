@@ -471,6 +471,13 @@ export function classifyHarnessSelfGovernedPath(filePath) {
   if (HARNESS_GATE_CONFIG_PATHS.includes(p)) return 'gate-config';
   // 说明权威（叙述 SSOT）：改动等价于调整门禁口径，须人工审阅
   if (/^\.claude\/harness\/spec\/.+\.md$/.test(p)) return 'gate-config';
+  // 规则层（2026-08-14）：`.claude/rules/*.md` 由 Claude Code 官方规则机制自动注入上下文
+  // ——无 `paths` 的规则随会话常驻，带 `paths` 的规则在读到匹配文件时注入。它与 CLAUDE.md
+  // 同属「写给代理看的强制文本」，改写它等于改写代理收到的约束本身（例如把「禁止手工编辑
+  // test-results」删成「必要时可手工补字段」），强度等同改 CLAUDE.md。历史上该目录在
+  // `dotClaudeExemptPatterns` 里被整体豁免（理由是「仅为提醒」），在规则真正生效后该理由
+  // 不再成立，故按 R12 只可加强的方向收回豁免，归 gate-config（须用户本人落盘）。
+  if (/^\.claude\/rules\/.+\.md$/.test(p)) return 'gate-config';
   // R29 加强（F-21）：门禁代码 / 运行器 / 角色约束
   if (HARNESS_GATE_CODE_PATTERNS.some((re) => re.test(p))) return 'gate-code';
   return null;
